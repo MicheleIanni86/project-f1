@@ -1,0 +1,32 @@
+{
+  "name": "project-f1-1",
+  "version": "1.0.0",
+  "description": "",
+  "main": "read_excel.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MicheleIanni86/project-f1.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/MicheleIanni86/project-f1/issues"
+  },
+  "homepage": "https://github.com/MicheleIanni86/project-f1#readme",
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.577.0",
+    "tailwind-merge": "^3.5.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.27",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.1"
+  }
+}

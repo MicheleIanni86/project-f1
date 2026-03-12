@@ -1,0 +1,11 @@
+name = "fanta-f1-backend"
+main = "src/index.js"
+compatibility_date = "2024-03-10"
+
+[vars]
+# ID del Google Sheet (lo troveremo nell'URL del browser)
+# SPREADSHEET_ID = ""
+
+[secrets]
+# GOOGLE_SERVICE_ACCOUNT_EMAIL
+# GOOGLE_PRIVATE_KEY
