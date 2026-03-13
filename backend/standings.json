@@ -1,0 +1,40 @@
+{
+  "players": ["Andrea", "Giovanni", "Luca", "Marco", "Michele", "Salvo"],
+  "standings": [
+    { "name": "Andrea", "pointsTotal": 6 },
+    { "name": "Giovanni", "pointsTotal": 4 },
+    { "name": "Luca", "pointsTotal": 6 },
+    { "name": "Marco", "pointsTotal": 6 },
+    { "name": "Michele", "pointsTotal": 2 },
+    { "name": "Salvo", "pointsTotal": 3 }
+  ],
+  "races": [
+    {
+      "id": 1,
+      "name": "AUSTRALIA",
+      "date": "07 MAR",
+      "time": "06:00",
+      "isSprint": false,
+      "points": {
+        "Andrea": 6,
+        "Giovanni": 4,
+        "Luca": 6,
+        "Marco": 6,
+        "Michele": 2,
+        "Salvo": 3
+      }
+    }
+  ],
+  "championship": {
+    "midSeasonPredictions": [],
+    "totals": {
+      "Andrea": 6,
+      "Giovanni": 4,
+      "Luca": 6,
+      "Marco": 6,
+      "Michele": 2,
+      "Salvo": 3
+    }
+  }
+}
+

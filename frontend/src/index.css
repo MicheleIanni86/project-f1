@@ -29,3 +29,14 @@
 .glass-panel {
   @apply bg-f1-panel/80 backdrop-blur-md border border-white/10 shadow-lg;
 }
+
+/* Sfondo “griglia” stile F1 per le schermate full-screen (es. modale pronostici) */
+.f1-grid-bg {
+  background-image:
+    radial-gradient(circle at top right, rgba(220, 0, 0, 0.12), transparent 50%),
+    radial-gradient(circle at bottom left, rgba(0, 210, 190, 0.15), transparent 55%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(225deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 18px 18px, 18px 18px;
+  background-position: 0 0, 0 0, 0 0, 9px 9px;
+}

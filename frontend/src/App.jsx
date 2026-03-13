@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Trophy, ChevronRight, User, Calendar, Flame, Timer, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
 
-// Semplice database mockato dei giocatori e gare iniziali
+// Semplice database dei giocatori (coerente con l'Excel)
 const PLAYERS = ['Andrea', 'Giovanni', 'Luca', 'Marco', 'Michele', 'Salvo'];
 
 import { DRIVERS } from './drivers';
@@ -13,14 +13,7 @@ const DEFAULT_RACES = [
   { id: 3, name: "CINA", date: "14 MAR", time: "08:00", isSprint: false, done: false }
 ];
 
-const MOCK_STANDINGS = [
-  { name: 'Andrea', points: 6, avatar: 'A' },
-  { name: 'Luca', points: 6, avatar: 'L' },
-  { name: 'Marco', points: 6, avatar: 'M' },
-  { name: 'Giovanni', points: 4, avatar: 'G' },
-  { name: 'Salvo', points: 3, avatar: 'S' },
-  { name: 'Michele', points: 2, avatar: 'M' }
-];
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -28,6 +21,24 @@ export default function App() {
   const [selectedRace, setSelectedRace] = useState(null);
   const [predictions, setPredictions] = useState({ pole: '', first: '', second: '', third: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [standings, setStandings] = useState(null);
+  const [loadingStandings, setLoadingStandings] = useState(false);
+  const [standingsError, setStandingsError] = useState(null);
+  const [openSection, setOpenSection] = useState(null);
+
+  useEffect(() => {
+    setLoadingStandings(true);
+    fetch(`${API_BASE}/standings`)
+      .then(res => res.json())
+      .then(data => {
+        setStandings(data);
+        setStandingsError(null);
+      })
+      .catch(() => {
+        setStandingsError('Impossibile caricare la classifica dal server.');
+      })
+      .finally(() => setLoadingStandings(false));
+  }, []);
 
   const handleDriverSelect = (position, driverId) => {
     setPredictions(prev => ({ ...prev, [position]: driverId }));
@@ -35,15 +46,32 @@ export default function App() {
 
   const currentRacePredictionsComplete = predictions.pole && predictions.first && predictions.second && predictions.third;
 
-  const submitPredictions = () => {
-    setIsSubmitting(true);
-    // Simula chiamata di rete a Google Sheets / Cloudflare
-    setTimeout(() => {
+  const submitPredictions = async () => {
+    if (!currentUser || !selectedRace) return;
+    try {
+      setIsSubmitting(true);
+      const res = await fetch(`${API_BASE}/submit-prediction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user: currentUser,
+          raceId: selectedRace.id,
+          predictions
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        alert('Errore nel salvataggio del pronostico.');
+      } else {
+        alert('Pronostico salvato correttamente!');
+        setSelectedRace(null);
+        setPredictions({ pole: '', first: '', second: '', third: '' });
+      }
+    } catch (e) {
+      alert('Errore di rete nel salvataggio del pronostico.');
+    } finally {
       setIsSubmitting(false);
-      alert('Pronostici salvati (Simulazione completata)');
-      setSelectedRace(null);
-      setPredictions({ pole: '', first: '', second: '', third: '' });
-    }, 1500);
+    }
   };
 
   return (
@@ -190,7 +218,13 @@ export default function App() {
                 </div>
 
                 <div className="space-y-3">
-                  {MOCK_STANDINGS.map((player, idx) => (
+                  {loadingStandings && (
+                    <p className="text-sm text-zinc-400">Caricamento classifica...</p>
+                  )}
+                  {standingsError && (
+                    <p className="text-sm text-red-500">{standingsError}</p>
+                  )}
+                  {standings && standings.standings && standings.standings.map((player, idx) => (
                     <div key={player.name} className="glass-panel flex items-center p-4 rounded-xl border border-white/5 relative overflow-hidden group">
                       {idx === 0 && <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-yellow-500/20 to-transparent -rotate-45 translate-x-8 -translate-y-8 pointer-events-none"></div>}
 
@@ -218,14 +252,14 @@ export default function App() {
 
                       {/* Punti */}
                       <div className="text-right">
-                        <p className="font-black text-2xl text-white">{player.points}</p>
+                        <p className="font-black text-2xl text-white">{player.pointsTotal}</p>
                         <p className="text-[9px] text-zinc-500 uppercase font-bold tracking-widest">Punti</p>
                       </div>
                     </div>
                   ))}
                 </div>
 
-                {/* Regolamento Rapido */}
+                {/* Regolamento Rapido + info campionato */}
                 <div className="glass-panel rounded-xl p-4 border border-white/5 mt-8 space-y-3">
                   <h4 className="font-bold text-sm tracking-widest uppercase border-b border-white/10 pb-2 text-zinc-400">Punteggi</h4>
                   <ul className="text-xs space-y-2 text-zinc-300 font-medium">
@@ -235,88 +269,268 @@ export default function App() {
                     <li className="flex justify-between items-center"><span className="text-zinc-500">Pole Position Esatta</span> <span className="text-f1-red font-bold">+2 pt</span></li>
                     <li className="flex justify-between items-center border-t border-white/10 pt-2"><span className="text-zinc-500">Costruttori Esatto</span> <span className="text-f1-red font-bold">+5 pt</span></li>
                   </ul>
+                  <div className="mt-4 text-[11px] text-zinc-400">
+                    {standings && standings.championship && standings.championship.midSeasonPredictions &&
+                      standings.championship.midSeasonPredictions.length === 0 && (
+                        <p>
+                          Pronostici di campionato (metà stagione): sezione pronta, dati ancora da inserire nel file Excel.
+                        </p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
 
             {/* modale Pronostici (Dettaglio Gara) */}
             {selectedRace && (
-              <div className="fixed inset-0 z-[100] bg-f1-darker flex flex-col overflow-y-auto animate-in fade-in slide-in-from-bottom-8 duration-300">
-                <div className="sticky top-0 bg-f1-darker/90 backdrop-blur-xl border-b border-white/5 p-4 flex items-center gap-3 z-10">
-                  <button
-                    onClick={() => setSelectedRace(null)}
-                    className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-zinc-400 hover:text-white"
-                  >
-                    <ChevronRight className="w-5 h-5 rotate-180" />
-                  </button>
-                  <div>
-                    <h3 className="font-bold uppercase tracking-wide">{selectedRace.name}</h3>
-                    <p className="text-xs text-f1-red font-semibold">INSERIMENTO PRONOSTICO</p>
+              <div className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex items-center justify-center animate-in fade-in slide-in-from-bottom-8 duration-300">
+                <div className="relative w-full max-w-5xl h-[90vh] mx-2 rounded-3xl overflow-hidden f1-grid-bg border border-white/10 shadow-2xl shadow-black/70 flex flex-col">
+                  {/* Header modale */}
+                  <div className="flex items-center gap-3 px-6 py-4 bg-gradient-to-b from-black/90 via-f1-darker/90 to-f1-darker/80 border-b border-white/5">
+                    <button
+                      onClick={() => setSelectedRace(null)}
+                      className="w-9 h-9 rounded-full bg-white/5 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
+                    >
+                      <ChevronRight className="w-5 h-5 rotate-180" />
+                    </button>
+                    <div className="flex flex-col gap-0.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-zinc-500">Fanta F1 • Pronostico</p>
+                      <h3 className="font-bold uppercase tracking-wide text-lg">{selectedRace.name}</h3>
+                      <p className="text-[11px] text-zinc-400">
+                        {selectedRace.date} • {selectedRace.time}{selectedRace.isSprint ? ' • Sprint' : ''}
+                      </p>
+                    </div>
+                    <div className="ml-auto hidden sm:flex gap-1 text-[9px] uppercase tracking-widest text-zinc-500">
+                      <span className="px-2 py-0.5 rounded-full border border-zinc-700/80 bg-black/40">Pole</span>
+                      <span className="px-2 py-0.5 rounded-full border border-zinc-700/80 bg-black/40">Podio</span>
+                    </div>
                   </div>
-                </div>
 
-                <div className="p-4 space-y-8 pb-32">
-                  {[
-                    { id: 'pole', label: 'Pole Position', icon: <Timer className="w-4 h-4" /> },
-                    { id: 'first', label: '1° Classificato', icon: <Trophy className="w-4 h-4 text-yellow-500" /> },
-                    { id: 'second', label: '2° Classificato', icon: <Trophy className="w-4 h-4 text-zinc-400" /> },
-                    { id: 'third', label: '3° Classificato', icon: <Trophy className="w-4 h-4 text-orange-400" /> },
-                  ].map(pos => (
-                    <div key={pos.id} className="space-y-3">
-                      <h4 className="font-bold flex items-center gap-2 border-b border-white/10 pb-2">
-                        {pos.icon} {pos.label}
-                      </h4>
+                  {/* Contenuto scrollabile */}
+                  <div className="flex-1 overflow-y-auto px-2 sm:px-4 md:px-6 py-4 space-y-6">
+                    {/* QUALIFICHE / POLE */}
+                    <div className="space-y-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-zinc-500 px-1">
+                        Qualifiche • Pole Position
+                      </p>
+                      {[
+                        { id: 'pole', label: 'Pole Position', icon: <Timer className="w-4 h-4" /> },
+                      ].map(pos => {
+                        const isOpen = openSection === pos.id;
+                        const hasSelection = !!predictions[pos.id];
+                        const selectedDriver = hasSelection
+                          ? DRIVERS.find(d => d.id === predictions[pos.id])
+                          : null;
 
-                      <div className="grid grid-cols-3 gap-2">
-                        {DRIVERS.map(driver => {
-                          const isSelected = predictions[pos.id] === driver.id;
-                          return (
+                        return (
+                          <div key={pos.id} className="rounded-2xl bg-black/40 border border-white/10 overflow-hidden">
+                            {/* Header accordion */}
                             <button
-                              key={driver.id}
-                              onClick={() => handleDriverSelect(pos.id, driver.id)}
-                              className={clsx(
-                                "p-2 rounded-lg text-xs font-bold transition-all border-l-[3px] text-left relative overflow-hidden group min-h-[50px] flex items-center",
-                                isSelected
-                                  ? "bg-white/10 shadow-inner"
-                                  : "bg-black/20 text-zinc-300 hover:bg-white/5"
-                              )}
-                              style={{ borderLeftColor: driver.hex }}
+                              type="button"
+                              onClick={() => setOpenSection(isOpen ? null : pos.id)}
+                              className="w-full flex items-center justify-between px-4 sm:px-5 py-3 sm:py-3.5"
                             >
-                              {/* Overlay Selezione */}
-                              {isSelected && <div className="absolute top-0 right-0 w-8 h-8 -rotate-45 translate-x-4 -translate-y-4 shadow-lg z-10" style={{ backgroundColor: driver.hex }}></div>}
-
-                              {/* Foto Pilota */}
-                              <div className={clsx(
-                                "absolute right-0 bottom-0 transition-all duration-300 w-14 h-14 overflow-hidden pointer-events-none mask-image-gradient-b",
-                                isSelected ? "opacity-100 mix-blend-normal" : "opacity-40 group-hover:opacity-60 mix-blend-screen"
-                              )}>
-                                {driver.img && (
-                                  <img
-                                    src={driver.img}
-                                    alt={driver.name}
-                                    className={clsx(
-                                      "w-full h-full object-cover object-top filter transition-all duration-300",
-                                      isSelected ? "grayscale-0 contrast-100" : "grayscale contrast-125"
-                                    )}
-                                  />
+                              <div className="flex items-center gap-2 sm:gap-3">
+                                {pos.icon}
+                                <span className="font-semibold text-xs sm:text-sm uppercase tracking-wide text-zinc-200">
+                                  {pos.label}
+                                </span>
+                                {hasSelection && selectedDriver && (
+                                  <span className="text-[10px] sm:text-xs text-zinc-400">
+                                    • {selectedDriver.name.split(' ').pop()}
+                                  </span>
                                 )}
                               </div>
-
-                              <div className="relative z-10">
-                                <div className="truncate group-hover:text-white transition-colors text-[11px]">{driver.name.split(' ').pop()}</div>
-                                <div className="text-[9px] opacity-70 font-normal truncate mt-[1px]">{driver.team}</div>
-                              </div>
+                              <ChevronRight
+                                className={clsx(
+                                  "w-4 h-4 text-zinc-500 transition-transform",
+                                  isOpen ? "rotate-90" : ""
+                                )}
+                              />
                             </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
 
-                {/* Bottone Invio Fisso in basso */}
-                <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-f1-darker via-f1-darker to-transparent z-10 pointer-events-none">
-                  <div className="max-w-md mx-auto pointer-events-auto">
+                            {/* Lista piloti (contenuto accordion) */}
+                            {isOpen && (
+                              <div className="px-2 sm:px-4 pb-3 sm:pb-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                  {DRIVERS.map(driver => {
+                                    const isSelected = predictions[pos.id] === driver.id;
+                                    return (
+                                      <button
+                                        key={driver.id}
+                                        onClick={() => handleDriverSelect(pos.id, driver.id)}
+                                        className={clsx(
+                                          "p-2 rounded-xl text-xs font-bold transition-all border-l-[3px] text-left relative overflow-hidden group min-h-[60px] flex items-center",
+                                          isSelected
+                                            ? "bg-white/10 shadow-inner ring-2 ring-offset-2 ring-offset-black/60"
+                                            : "bg-black/40 text-zinc-300 hover:bg-white/5 hover:-translate-y-[1px]"
+                                        )}
+                                        style={{ borderLeftColor: driver.hex }}
+                                      >
+                                        {/* Overlay Selezione */}
+                                        {isSelected && (
+                                          <div
+                                            className="absolute top-0 right-0 w-8 h-8 -rotate-45 translate-x-4 -translate-y-4 shadow-lg z-10"
+                                            style={{ backgroundColor: driver.hex }}
+                                          ></div>
+                                        )}
+
+                                        {/* Foto Pilota */}
+                                        <div
+                                          className={clsx(
+                                            "absolute right-0 bottom-0 transition-all duration-300 w-16 h-16 overflow-hidden pointer-events-none mask-image-gradient-b",
+                                            isSelected
+                                              ? "opacity-100 mix-blend-normal"
+                                              : "opacity-30 group-hover:opacity-60 mix-blend-screen"
+                                          )}
+                                        >
+                                          {driver.img && (
+                                            <img
+                                              src={driver.img}
+                                              alt={driver.name}
+                                              className={clsx(
+                                                "w-full h-full object-cover object-top filter transition-all duration-300",
+                                                isSelected
+                                                  ? "grayscale-0 contrast-100"
+                                                  : "grayscale contrast-125"
+                                              )}
+                                            />
+                                          )}
+                                        </div>
+
+                                        <div className="relative z-10 max-w-[75%]">
+                                          <div className="truncate group-hover:text-white transition-colors text-[11px]">
+                                            {driver.name.split(' ').pop()}
+                                          </div>
+                                          <div className="text-[9px] opacity-70 font-normal truncate mt-[1px]">
+                                            {driver.team}
+                                          </div>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* GARA / ORDINE ARRIVO */}
+                    <div className="space-y-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-zinc-500 px-1 mt-2">
+                        Gara • Ordine d'arrivo
+                      </p>
+                      {[
+                        { id: 'first', label: '1° Classificato', icon: <Trophy className="w-4 h-4 text-yellow-500" /> },
+                        { id: 'second', label: '2° Classificato', icon: <Trophy className="w-4 h-4 text-zinc-400" /> },
+                        { id: 'third', label: '3° Classificato', icon: <Trophy className="w-4 h-4 text-orange-400" /> },
+                      ].map(pos => {
+                        const isOpen = openSection === pos.id;
+                        const hasSelection = !!predictions[pos.id];
+                        const selectedDriver = hasSelection
+                          ? DRIVERS.find(d => d.id === predictions[pos.id])
+                          : null;
+
+                        return (
+                          <div key={pos.id} className="rounded-2xl bg-black/40 border border-white/10 overflow-hidden">
+                            {/* Header accordion */}
+                            <button
+                              type="button"
+                              onClick={() => setOpenSection(isOpen ? null : pos.id)}
+                              className="w-full flex items-center justify-between px-4 sm:px-5 py-3 sm:py-3.5"
+                            >
+                              <div className="flex items-center gap-2 sm:gap-3">
+                                {pos.icon}
+                                <span className="font-semibold text-xs sm:text-sm uppercase tracking-wide text-zinc-200">
+                                  {pos.label}
+                                </span>
+                                {hasSelection && selectedDriver && (
+                                  <span className="text-[10px] sm:text-xs text-zinc-400">
+                                    • {selectedDriver.name.split(' ').pop()}
+                                  </span>
+                                )}
+                              </div>
+                              <ChevronRight
+                                className={clsx(
+                                  "w-4 h-4 text-zinc-500 transition-transform",
+                                  isOpen ? "rotate-90" : ""
+                                )}
+                              />
+                            </button>
+
+                            {/* Lista piloti (contenuto accordion) */}
+                            {isOpen && (
+                              <div className="px-2 sm:px-4 pb-3 sm:pb-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                  {DRIVERS.map(driver => {
+                                    const isSelected = predictions[pos.id] === driver.id;
+                                    return (
+                                      <button
+                                        key={driver.id}
+                                        onClick={() => handleDriverSelect(pos.id, driver.id)}
+                                        className={clsx(
+                                          "p-2 rounded-xl text-xs font-bold transition-all border-l-[3px] text-left relative overflow-hidden group min-h-[60px] flex items-center",
+                                          isSelected
+                                            ? "bg-white/10 shadow-inner ring-2 ring-offset-2 ring-offset-black/60"
+                                            : "bg-black/40 text-zinc-300 hover:bg-white/5 hover:-translate-y-[1px]"
+                                        )}
+                                        style={{ borderLeftColor: driver.hex }}
+                                      >
+                                        {/* Overlay Selezione */}
+                                        {isSelected && (
+                                          <div
+                                            className="absolute top-0 right-0 w-8 h-8 -rotate-45 translate-x-4 -translate-y-4 shadow-lg z-10"
+                                            style={{ backgroundColor: driver.hex }}
+                                          ></div>
+                                        )}
+
+                                        {/* Foto Pilota */}
+                                        <div
+                                          className={clsx(
+                                            "absolute right-0 bottom-0 transition-all duration-300 w-16 h-16 overflow-hidden pointer-events-none mask-image-gradient-b",
+                                            isSelected
+                                              ? "opacity-100 mix-blend-normal"
+                                              : "opacity-30 group-hover:opacity-60 mix-blend-screen"
+                                          )}
+                                        >
+                                          {driver.img && (
+                                            <img
+                                              src={driver.img}
+                                              alt={driver.name}
+                                              className={clsx(
+                                                "w-full h-full object-cover object-top filter transition-all duration-300",
+                                                isSelected
+                                                  ? "grayscale-0 contrast-100"
+                                                  : "grayscale contrast-125"
+                                              )}
+                                            />
+                                          )}
+                                        </div>
+
+                                        <div className="relative z-10 max-w-[75%]">
+                                          <div className="truncate group-hover:text-white transition-colors text-[11px]">
+                                            {driver.name.split(' ').pop()}
+                                          </div>
+                                          <div className="text-[9px] opacity-70 font-normal truncate mt-[1px]">
+                                            {driver.team}
+                                          </div>
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Bottone Invio in basso alla card */}
+                  <div className="px-6 py-4 bg-gradient-to-t from-black via-black/95 to-transparent border-t border-white/5">
                     <button
                       onClick={submitPredictions}
                       disabled={!currentRacePredictionsComplete || isSubmitting}
