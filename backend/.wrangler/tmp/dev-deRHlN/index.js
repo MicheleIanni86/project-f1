@@ -1,8 +1,82 @@
 var __defProp = Object.defineProperty;
 var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
+// standings.json
+var standings_default = {
+  players: ["Andrea", "Giovanni", "Luca", "Marco", "Michele", "Salvo"],
+  standings: [
+    { name: "Andrea", pointsTotal: 6 },
+    { name: "Giovanni", pointsTotal: 4 },
+    { name: "Luca", pointsTotal: 6 },
+    { name: "Marco", pointsTotal: 6 },
+    { name: "Michele", pointsTotal: 2 },
+    { name: "Salvo", pointsTotal: 3 }
+  ],
+  races: [
+    {
+      id: 1,
+      name: "AUSTRALIA",
+      date: "07 MAR",
+      time: "06:00",
+      isSprint: false,
+      points: {
+        Andrea: 6,
+        Giovanni: 4,
+        Luca: 6,
+        Marco: 6,
+        Michele: 2,
+        Salvo: 3
+      }
+    }
+  ],
+  championship: {
+    midSeasonPredictions: [],
+    totals: {
+      Andrea: 6,
+      Giovanni: 4,
+      Luca: 6,
+      Marco: 6,
+      Michele: 2,
+      Salvo: 3
+    }
+  }
+};
+
 // src/index.js
 var PLAYERS = ["Andrea", "Giovanni", "Luca", "Marco", "Michele", "Salvo"];
+var SCORE_COLUMNS = ["I", "J", "K", "L", "M", "N"];
+var RACES = [
+  { id: 1, name: "AUSTRALIA", date: "07 MAR", time: "06:00", isSprint: false },
+  { id: 2, name: "CINA SPRINT", date: "13 MAR", time: "08:30", isSprint: true },
+  { id: 3, name: "CINA", date: "14 MAR", time: "08:00", isSprint: false },
+  { id: 4, name: "GIAPPONE", date: "28 MAR", time: "07:00", isSprint: false },
+  { id: 5, name: "BAHRAIN", date: "11 APR", time: "18:00", isSprint: false },
+  { id: 6, name: "ARABIA SAUDITA", date: "18 APR", time: "19:00", isSprint: false },
+  { id: 7, name: "MIAMI SPRINT", date: "01 MAG", time: "22:30", isSprint: true },
+  { id: 8, name: "MIAMI", date: "02 MAG", time: "22:00", isSprint: false },
+  { id: 9, name: "CANADA SPRINT", date: "22 MAG", time: "22:30", isSprint: true },
+  { id: 10, name: "CANADA", date: "23 MAG", time: "22:00", isSprint: false },
+  { id: 11, name: "MONACO", date: "06 GIU", time: "16:00", isSprint: false },
+  { id: 12, name: "CATALUNYA", date: "13 GIU", time: "16:00", isSprint: false },
+  { id: 13, name: "AUSTRIA", date: "27 GIU", time: "16:00", isSprint: false },
+  { id: 14, name: "UK SPRINT", date: "03 LUG", time: "17:30", isSprint: true },
+  { id: 15, name: "UK", date: "04 LUG", time: "17:00", isSprint: false },
+  { id: 16, name: "BELGIO", date: "18 LUG", time: "16:00", isSprint: false },
+  { id: 17, name: "UNGHERIA", date: "25 LUG", time: "16:00", isSprint: false },
+  { id: 18, name: "OLANDA SPRINT", date: "21 AGO", time: "16:30", isSprint: true },
+  { id: 19, name: "OLANDA", date: "22 AGO", time: "16:00", isSprint: false },
+  { id: 20, name: "ITALIA", date: "05 SET", time: "16:00", isSprint: false },
+  { id: 21, name: "SPAGNA", date: "12 SET", time: "16:00", isSprint: false },
+  { id: 22, name: "AZERBAIJAN", date: "25 SET", time: "14:00", isSprint: false },
+  { id: 23, name: "SINGAPORE SPRINT", date: "09 OTT", time: "14:30", isSprint: true },
+  { id: 24, name: "SINGAPORE", date: "10 OTT", time: "15:00", isSprint: false },
+  { id: 25, name: "USA", date: "24 OTT", time: "23:00", isSprint: false },
+  { id: 26, name: "MESSICO", date: "31 OTT", time: "22:00", isSprint: false },
+  { id: 27, name: "BRASILE", date: "07 NOV", time: "19:00", isSprint: false },
+  { id: 28, name: "LAS VEGAS", date: "21 NOV", time: "05:00", isSprint: false },
+  { id: 29, name: "QATAR", date: "28 NOV", time: "19:00", isSprint: false },
+  { id: 30, name: "ABU DHABI", date: "05 DIC", time: "15:00", isSprint: false }
+];
 var PLAYER_COLUMNS = {
   Andrea: "C",
   Giovanni: "D",
@@ -22,6 +96,9 @@ function getRaceRows(raceId) {
 }
 __name(getRaceRows, "getRaceRows");
 async function getAccessToken(googleServiceAccountJson) {
+  if (!googleServiceAccountJson) {
+    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON non configurato");
+  }
   const creds = JSON.parse(googleServiceAccountJson);
   const now = Math.floor(Date.now() / 1e3);
   const header = {
@@ -38,7 +115,7 @@ async function getAccessToken(googleServiceAccountJson) {
   const encoder = new TextEncoder();
   function base64UrlEncode(obj) {
     const json = typeof obj === "string" ? obj : JSON.stringify(obj);
-    let base64 = btoa(unescape(encodeURIComponent(json)));
+    const base64 = btoa(unescape(encodeURIComponent(json)));
     return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
   }
   __name(base64UrlEncode, "base64UrlEncode");
@@ -96,7 +173,7 @@ function arrayBufferToBase64Url(buffer) {
   for (let i = 0; i < len; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
-  let base64 = btoa(binary);
+  const base64 = btoa(binary);
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 __name(arrayBufferToBase64Url, "arrayBufferToBase64Url");
@@ -139,6 +216,101 @@ async function writeValue({ sheetId, accessToken, range, value }) {
   }
 }
 __name(writeValue, "writeValue");
+function buildStandingsPayload(sourceStandings, races = [], midSeasonPredictions = []) {
+  const normalizedStandings = PLAYERS.map((name) => {
+    const playerStanding = sourceStandings.find((standing) => standing.name === name);
+    return {
+      name,
+      avatar: name[0].toUpperCase(),
+      pointsTotal: Number(playerStanding?.pointsTotal || 0)
+    };
+  });
+  return {
+    players: PLAYERS,
+    standings: normalizedStandings,
+    races,
+    championship: {
+      midSeasonPredictions,
+      totals: normalizedStandings.reduce((acc, standing) => {
+        acc[standing.name] = standing.pointsTotal;
+        return acc;
+      }, {})
+    }
+  };
+}
+__name(buildStandingsPayload, "buildStandingsPayload");
+function getFallbackPayload() {
+  return buildStandingsPayload(
+    standings_default.standings || [],
+    standings_default.races?.length ? standings_default.races : RACES,
+    standings_default.championship?.midSeasonPredictions || []
+  );
+}
+__name(getFallbackPayload, "getFallbackPayload");
+function getScoreRange(raceId) {
+  const rows = getRaceRows(raceId);
+  return `Foglio1!${SCORE_COLUMNS[0]}${rows.pole}:${SCORE_COLUMNS[SCORE_COLUMNS.length - 1]}${rows.pole}`;
+}
+__name(getScoreRange, "getScoreRange");
+function buildStandingsFromTotalsRow(totalsRow = []) {
+  return PLAYERS.map((name, idx) => ({
+    name,
+    pointsTotal: Number(totalsRow[idx] || 0)
+  }));
+}
+__name(buildStandingsFromTotalsRow, "buildStandingsFromTotalsRow");
+function buildRaceSummaries(scoreRows = []) {
+  return RACES.map((race, idx) => {
+    const scoreRow = scoreRows[idx] || [];
+    const points = PLAYERS.reduce((acc, player, playerIdx) => {
+      acc[player] = Number(scoreRow[playerIdx] || 0);
+      return acc;
+    }, {});
+    return {
+      ...race,
+      points
+    };
+  });
+}
+__name(buildRaceSummaries, "buildRaceSummaries");
+function getEmptyRacePredictions(raceId) {
+  return {
+    raceId,
+    predictions: PLAYERS.map((player, idx) => ({
+      player,
+      avatar: player[0].toUpperCase(),
+      pole: "",
+      first: "",
+      second: "",
+      third: "",
+      column: Object.values(PLAYER_COLUMNS)[idx]
+    }))
+  };
+}
+__name(getEmptyRacePredictions, "getEmptyRacePredictions");
+function buildRacePredictionsPayload(raceId, values = []) {
+  const predictionRows = [0, 1, 2, 3].map((rowIndex) => values[rowIndex] || []);
+  return {
+    raceId,
+    predictions: PLAYERS.map((player, idx) => ({
+      player,
+      avatar: player[0].toUpperCase(),
+      pole: predictionRows[0][idx + 2] || "",
+      first: predictionRows[1][idx + 2] || "",
+      second: predictionRows[2][idx + 2] || "",
+      third: predictionRows[3][idx + 2] || "",
+      column: Object.values(PLAYER_COLUMNS)[idx]
+    }))
+  };
+}
+__name(buildRacePredictionsPayload, "buildRacePredictionsPayload");
+function jsonResponse(payload, corsHeaders, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" }
+  });
+}
+__name(jsonResponse, "jsonResponse");
 var src_default = {
   async fetch(request, env) {
     const { SHEET_ID, GOOGLE_SERVICE_ACCOUNT_JSON } = env;
@@ -158,6 +330,9 @@ var src_default = {
         if (!PLAYER_COLUMNS[user]) {
           throw new Error("Giocatore non valido");
         }
+        if (!predictions || typeof predictions !== "object") {
+          throw new Error("Pronostici mancanti o non validi");
+        }
         const raceIdNumber = Number(raceId);
         if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
           throw new Error("Gara non supportata");
@@ -172,55 +347,81 @@ var src_default = {
           const range = `Foglio1!${col}${row}`;
           await writeValue({ sheetId: SHEET_ID, accessToken, range, value });
         }
-        return new Response(
-          JSON.stringify({ success: true, message: "Pronostico salvato sul Google Sheet" }),
-          {
-            headers: { ...corsHeaders, "Content-Type": "application/json" }
-          }
+        return jsonResponse(
+          { success: true, message: "Pronostico salvato sul Google Sheet" },
+          corsHeaders
         );
       } catch (err) {
         console.error(err);
-        return new Response(JSON.stringify({ success: false, error: err.message }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
-        });
+        return jsonResponse({ success: false, error: err.message }, corsHeaders, 400);
       }
     }
     if (url.pathname === "/standings" && request.method === "GET") {
       try {
+        if (!GOOGLE_SERVICE_ACCOUNT_JSON) {
+          return jsonResponse(getFallbackPayload(), corsHeaders);
+        }
         const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
         const totalsRes = await readRange({
           sheetId: SHEET_ID,
           accessToken,
-          range: "Foglio1!C14:H14"
+          range: "Foglio1!Q14:V14"
         });
+        const raceScoreRanges = RACES.map((race) => getScoreRange(race.id));
+        const raceScoresRes = await Promise.all(
+          raceScoreRanges.map(
+            (range) => readRange({
+              sheetId: SHEET_ID,
+              accessToken,
+              range
+            })
+          )
+        );
         const totalsRow = totalsRes.values && totalsRes.values[0] || [];
-        const standings = PLAYERS.map((name, idx) => ({
-          name,
-          avatar: name[0].toUpperCase(),
-          pointsTotal: Number(totalsRow[idx] || 0)
-        }));
-        const responsePayload = {
-          players: PLAYERS,
-          standings,
-          races: [],
-          championship: {
-            midSeasonPredictions: [],
-            totals: standings.reduce((acc, s) => {
-              acc[s.name] = s.pointsTotal;
-              return acc;
-            }, {})
-          }
-        };
-        return new Response(JSON.stringify(responsePayload), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
-        });
+        const standings = buildStandingsFromTotalsRow(totalsRow);
+        const races = buildRaceSummaries(
+          raceScoresRes.map((result) => result.values && result.values[0] || [])
+        );
+        return jsonResponse(buildStandingsPayload(standings, races), corsHeaders);
       } catch (err) {
         console.error(err);
-        return new Response(JSON.stringify({ success: false, error: err.message }), {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" }
+        return jsonResponse(
+          {
+            ...getFallbackPayload(),
+            warning: "Dati Google Sheets non disponibili, uso fallback locale"
+          },
+          corsHeaders
+        );
+      }
+    }
+    if (url.pathname === "/race-predictions" && request.method === "GET") {
+      const raceIdNumber = Number(url.searchParams.get("raceId"));
+      if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
+        return jsonResponse(
+          { success: false, error: "Parametro raceId non valido" },
+          corsHeaders,
+          400
+        );
+      }
+      try {
+        if (!GOOGLE_SERVICE_ACCOUNT_JSON) {
+          return jsonResponse(getEmptyRacePredictions(raceIdNumber), corsHeaders);
+        }
+        const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
+        const rows = getRaceRows(raceIdNumber);
+        const raceRange = `Foglio1!A${rows.pole}:H${rows.third}`;
+        const raceRes = await readRange({
+          sheetId: SHEET_ID,
+          accessToken,
+          range: raceRange
         });
+        return jsonResponse(
+          buildRacePredictionsPayload(raceIdNumber, raceRes.values || []),
+          corsHeaders
+        );
+      } catch (err) {
+        console.error(err);
+        return jsonResponse(getEmptyRacePredictions(raceIdNumber), corsHeaders);
       }
     }
     return new Response("FantaF1 API Operational", { headers: corsHeaders });
