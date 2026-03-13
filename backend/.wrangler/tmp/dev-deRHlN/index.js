@@ -388,7 +388,8 @@ var src_default = {
         return jsonResponse(
           {
             ...getFallbackPayload(),
-            warning: "Dati Google Sheets non disponibili, uso fallback locale"
+            warning: "Dati Google Sheets non disponibili, uso fallback locale",
+            warningDetail: err.message
           },
           corsHeaders
         );
@@ -421,7 +422,14 @@ var src_default = {
         );
       } catch (err) {
         console.error(err);
-        return jsonResponse(getEmptyRacePredictions(raceIdNumber), corsHeaders);
+        return jsonResponse(
+          {
+            ...getEmptyRacePredictions(raceIdNumber),
+            warning: "Lettura Google Sheets non disponibile",
+            warningDetail: err.message
+          },
+          corsHeaders
+        );
       }
     }
     return new Response("FantaF1 API Operational", { headers: corsHeaders });

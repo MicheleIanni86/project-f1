@@ -169,6 +169,21 @@ function PredictionTile({ label, value }) {
   );
 }
 
+function PredictionGroup({ title, accentClass, items }) {
+  return (
+    <div className="rounded-2xl border border-white/8 bg-white/[0.03] overflow-hidden">
+      <div className={clsx('px-3 py-2 border-b border-white/8', accentClass)}>
+        <p className="text-[10px] font-black uppercase tracking-[0.28em]">{title}</p>
+      </div>
+      <div className="p-3 grid gap-2 grid-cols-1 sm:grid-cols-2">
+        {items.map(([label, value]) => (
+          <PredictionTile key={label} label={label} value={value} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RacePredictionsBoard({ predictions, compact = false }) {
   return (
     <div className={clsx('space-y-3', compact && 'space-y-2')}>
@@ -183,15 +198,23 @@ function RacePredictionsBoard({ predictions, compact = false }) {
               <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Pronostico</p>
             </div>
           </div>
-          <div className={clsx('grid gap-2', compact ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-4')}>
-            {[
-              ['Pole', entry.pole],
-              ['1°', entry.first],
-              ['2°', entry.second],
-              ['3°', entry.third]
-            ].map(([label, value]) => (
-              <PredictionTile key={label} label={label} value={value} />
-            ))}
+          <div className={clsx('space-y-3', compact && 'space-y-2')}>
+            <PredictionGroup
+              title="Qualifica"
+              accentClass="bg-cyan-500/12 text-cyan-200"
+              items={[
+                ['Pole Position', entry.pole]
+              ]}
+            />
+            <PredictionGroup
+              title="Gara"
+              accentClass="bg-amber-500/12 text-amber-200"
+              items={[
+                ['1° posto', entry.first],
+                ['2° posto', entry.second],
+                ['3° posto', entry.third]
+              ]}
+            />
           </div>
         </div>
       ))}

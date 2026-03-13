@@ -381,6 +381,7 @@ export default {
                     {
                         ...getFallbackPayload(),
                         warning: "Dati Google Sheets non disponibili, uso fallback locale",
+                        warningDetail: err.message,
                     },
                     corsHeaders,
                 );
@@ -418,7 +419,14 @@ export default {
                 );
             } catch (err) {
                 console.error(err);
-                return jsonResponse(getEmptyRacePredictions(raceIdNumber), corsHeaders);
+                return jsonResponse(
+                    {
+                        ...getEmptyRacePredictions(raceIdNumber),
+                        warning: "Lettura Google Sheets non disponibile",
+                        warningDetail: err.message,
+                    },
+                    corsHeaders,
+                );
             }
         }
 
