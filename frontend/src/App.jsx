@@ -54,7 +54,10 @@ const MONTH_MAP = {
   DIC: 11
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://fanta-f1-backend.michelepizzica.workers.dev';
+const DEFAULT_API_BASE = 'https://fanta-f1-backend.michelepizzica.workers.dev';
+const API_BASES = Array.from(
+  new Set([import.meta.env.VITE_API_BASE_URL, DEFAULT_API_BASE].filter(Boolean))
+);
 const EMPTY_PREDICTIONS = { pole: '', first: '', second: '', third: '' };
 
 function toRaceDate(race) {
@@ -79,6 +82,34 @@ function playerInitial(name) {
 
 function formatPrediction(value) {
   return value || '—';
+}
+
+async function apiFetchJson(path, options) {
+  let lastError = null;
+
+  for (const base of API_BASES) {
+    const normalizedBase = base.replace(/\/+$/, '');
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+
+    try {
+      const response = await fetch(`${normalizedBase}${normalizedPath}`, options);
+      const text = await response.text();
+
+      if (!response.ok) {
+        throw new Error(`${response.status} ${text || 'empty response'}`);
+      }
+
+      try {
+        return JSON.parse(text);
+      } catch {
+        throw new Error(`Risposta non JSON da ${normalizedBase}`);
+      }
+    } catch (error) {
+      lastError = new Error(`${normalizedBase}: ${error.message}`);
+    }
+  }
+
+  throw lastError || new Error('Nessun endpoint API disponibile');
 }
 
 function normalizeValue(value) {
@@ -313,14 +344,13 @@ export default function App() {
 
   useEffect(() => {
     setLoadingStandings(true);
-    fetch(`${API_BASE}/standings`)
-      .then((res) => res.json())
+    apiFetchJson('/standings')
       .then((data) => {
         setStandings(data);
         setStandingsError(null);
       })
-      .catch(() => {
-        setStandingsError('Impossibile caricare la classifica dal server.');
+      .catch((error) => {
+        setStandingsError(`Impossibile caricare la classifica dal server. ${error.message}`);
       })
       .finally(() => setLoadingStandings(false));
   }, []);
@@ -330,8 +360,7 @@ export default function App() {
     setRacePredictionsError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/race-predictions?raceId=${race.id}`);
-      const data = await res.json();
+      const data = await apiFetchJson(`/race-predictions?raceId=${race.id}`);
       const nextPredictions = data.predictions || [];
       setRacePredictions(nextPredictions);
 
@@ -346,9 +375,9 @@ export default function App() {
       } else {
         setPredictions(EMPTY_PREDICTIONS);
       }
-    } catch {
+    } catch (error) {
       setRacePredictions([]);
-      setRacePredictionsError('Impossibile caricare i pronostici di questa gara.');
+      setRacePredictionsError(`Impossibile caricare i pronostici di questa gara. ${error.message}`);
       setPredictions(EMPTY_PREDICTIONS);
     } finally {
       setRacePredictionsLoading(false);
@@ -371,7 +400,7 @@ export default function App() {
 
     try {
       setIsSubmitting(true);
-      const res = await fetch(`${API_BASE}/submit-prediction`, {
+      const data = await apiFetchJson('/submit-prediction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -380,8 +409,7 @@ export default function App() {
           predictions
         })
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!data.success) {
         alert('Errore nel salvataggio del pronostico.');
         return;
       }
