@@ -54,7 +54,7 @@ const MONTH_MAP = {
   DIC: 11
 };
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://fanta-f1-backend.michelepizzica.workers.dev';
 const EMPTY_PREDICTIONS = { pole: '', first: '', second: '', third: '' };
 
 function toRaceDate(race) {
