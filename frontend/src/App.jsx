@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Trophy, ChevronRight, User, Calendar, Flame, Timer, CheckCircle2, Eye, Lock, LogOut } from 'lucide-react';
+import { Trophy, ChevronRight, User, Calendar, Flame, Timer, CheckCircle2, Eye, Lock, LogOut, Menu, X, FileSpreadsheet } from 'lucide-react';
 import clsx from 'clsx';
 
 import { DRIVERS } from './drivers';
@@ -59,10 +59,39 @@ const API_BASES = Array.from(
   new Set([import.meta.env.VITE_API_BASE_URL, DEFAULT_API_BASE].filter(Boolean))
 );
 const EMPTY_PREDICTIONS = { pole: '', first: '', second: '', third: '' };
+const SHARED_SHEET_URL = import.meta.env.VITE_SHARED_SHEET_URL || 'https://docs.google.com/spreadsheets/d/1wMlfyrE5eZKV18N6a5Dh-qH9ls0Nuhtdt-gBXHajPVs/edit?gid=0';
+const SHARED_SHEET_ID = '1wMlfyrE5eZKV18N6a5Dh-qH9ls0Nuhtdt-gBXHajPVs';
 const STORAGE_KEYS = {
   currentUser: 'f1nta-current-user'
 };
-const PREDICTION_OPENING_HOURS = 48;
+const RACE_WEEKEND_HOURS = 48;
+
+function normalizePredictionSet(value) {
+  return {
+    pole: value?.pole || '',
+    first: value?.first || '',
+    second: value?.second || '',
+    third: value?.third || ''
+  };
+}
+
+function predictionsAreEqual(a, b) {
+  const left = normalizePredictionSet(a);
+  const right = normalizePredictionSet(b);
+  return left.pole === right.pole
+    && left.first === right.first
+    && left.second === right.second
+    && left.third === right.third;
+}
+
+function isPodiumPosition(position) {
+  return position === 'first' || position === 'second' || position === 'third';
+}
+
+function hasDuplicatePodiumPredictions(predictions) {
+  const values = [predictions.first, predictions.second, predictions.third].filter(Boolean);
+  return new Set(values).size !== values.length;
+}
 
 function toRaceDate(race) {
   const [day, month] = race.date.split(' ');
@@ -72,17 +101,105 @@ function toRaceDate(race) {
   return new Date(2026, monthIndex, Number(day), hours, minutes);
 }
 
+function endOfRaceDay(date) {
+  if (!date) return null;
+  const next = new Date(date);
+  next.setHours(23, 59, 59, 999);
+  return next;
+}
+
 function normalizeRace(race) {
   const deadline = toRaceDate(race);
-  const opensAt = deadline ? new Date(deadline.getTime() - PREDICTION_OPENING_HOURS * 60 * 60 * 1000) : null;
+  const weekendStartsAt = deadline ? new Date(deadline.getTime() - RACE_WEEKEND_HOURS * 60 * 60 * 1000) : null;
+  const raceDayEndsAt = endOfRaceDay(deadline);
   const now = new Date();
   return {
     ...race,
     deadline,
-    opensAt,
-    done: deadline ? deadline < now : false,
-    isOpen: deadline && opensAt ? now >= opensAt && now < deadline : false
+    weekendStartsAt,
+    raceDayEndsAt,
+    done: raceDayEndsAt ? raceDayEndsAt < now : false,
+    isOpen: deadline ? now < deadline : false,
+    isOngoing: raceDayEndsAt && weekendStartsAt ? now >= weekendStartsAt && now <= raceDayEndsAt : false
   };
+}
+
+function buildStandingsWithRank(standings) {
+  let previousPoints = null;
+  let currentRank = 0;
+
+  return standings.map((player, index) => {
+    const points = Number(player.pointsTotal || 0);
+    if (previousPoints !== points) {
+      currentRank += 1;
+    }
+    previousPoints = points;
+
+    return {
+      ...player,
+      rank: currentRank
+    };
+  });
+}
+
+function groupStandingsByRank(standings) {
+  return standings.reduce((groups, player) => {
+    const lastGroup = groups[groups.length - 1];
+    if (lastGroup && lastGroup.rank === player.rank && lastGroup.pointsTotal === player.pointsTotal) {
+      lastGroup.players.push(player);
+      return groups;
+    }
+
+    groups.push({
+      rank: player.rank,
+      pointsTotal: player.pointsTotal,
+      players: [player]
+    });
+    return groups;
+  }, []);
+}
+
+function formatSessionDateTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return null;
+
+  const day = new Intl.DateTimeFormat('it-IT', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Europe/Rome'
+  }).format(date);
+
+  const time = new Intl.DateTimeFormat('it-IT', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Rome'
+  }).format(date);
+
+  return `${day} • ${time}`;
+}
+
+function formatWeekendDayBadge(qualifyingDate, raceDate, fallbackDate) {
+  const toDay = (value) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.valueOf())) return null;
+    return new Intl.DateTimeFormat('it-IT', {
+      day: '2-digit',
+      timeZone: 'Europe/Rome'
+    }).format(date);
+  };
+
+  const qualifyingDay = toDay(qualifyingDate);
+  const raceDay = toDay(raceDate);
+
+  if (qualifyingDay && raceDay) {
+    return qualifyingDay === raceDay ? qualifyingDay : `${qualifyingDay}/${raceDay}`;
+  }
+
+  if (raceDay) return raceDay;
+  return fallbackDate.split(' ')[0];
 }
 
 function playerInitial(name) {
@@ -119,6 +236,75 @@ async function apiFetchJson(path, options) {
   }
 
   throw lastError || new Error('Nessun endpoint API disponibile');
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        cell += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      row.push(cell);
+      cell = '';
+      continue;
+    }
+
+    if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && next === '\n') {
+        i += 1;
+      }
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+      continue;
+    }
+
+    cell += char;
+  }
+
+  if (cell.length || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+async function fetchPublicSheetTotals() {
+  const url = `https://docs.google.com/spreadsheets/d/${SHARED_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Foglio1&range=Q14:V14`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Errore lettura foglio pubblico: ${response.status}`);
+  }
+
+  const text = await response.text();
+  const [row = []] = parseCsv(text);
+
+  return PLAYERS.map((name, index) => ({
+    name,
+    avatar: name[0].toUpperCase(),
+    pointsTotal: Number(row[index] || 0)
+  }));
+}
+
+function getDefaultRaceFilter(races) {
+  return races.some((race) => race.isOngoing) ? 'ongoing' : 'upcoming';
 }
 
 function normalizeValue(value) {
@@ -420,15 +606,21 @@ function DriverPicker({ title, icon, position, predictions, openSection, setOpen
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {DRIVERS.map((driver) => {
               const isSelected = predictions[position] === driver.id;
+              const isDisabled = isPodiumPosition(position)
+                && !isSelected
+                && [predictions.first, predictions.second, predictions.third].includes(driver.id);
               return (
                 <button
                   key={driver.id}
-                  onClick={() => handleDriverSelect(position, driver.id)}
+                  onClick={() => !isDisabled && handleDriverSelect(position, driver.id)}
+                  disabled={isDisabled}
                   className={clsx(
                     'p-2 rounded-xl text-xs font-bold transition-all border-l-[3px] text-left relative overflow-hidden group min-h-[60px] flex items-center',
                     isSelected
                       ? 'bg-white/10 shadow-inner ring-2 ring-offset-2 ring-offset-black/60'
-                      : 'bg-black/40 text-zinc-300 hover:bg-white/5 hover:-translate-y-[1px]'
+                      : isDisabled
+                        ? 'bg-black/20 text-zinc-500 opacity-40 cursor-not-allowed'
+                        : 'bg-black/40 text-zinc-300 hover:bg-white/5 hover:-translate-y-[1px]'
                   )}
                   style={{ borderLeftColor: driver.hex }}
                 >
@@ -488,7 +680,7 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [activeTab, setActiveTab] = useState('races');
-  const [raceFilter, setRaceFilter] = useState('upcoming');
+  const [raceFilter, setRaceFilter] = useState(() => getDefaultRaceFilter(DEFAULT_RACES.map(normalizeRace)));
   const [selectedRace, setSelectedRace] = useState(null);
   const [predictions, setPredictions] = useState(EMPTY_PREDICTIONS);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -500,14 +692,42 @@ export default function App() {
   const [racePredictions, setRacePredictions] = useState([]);
   const [racePredictionsLoading, setRacePredictionsLoading] = useState(false);
   const [racePredictionsError, setRacePredictionsError] = useState(null);
+  const [raceLockInfo, setRaceLockInfo] = useState(null);
+  const [raceScheduleMap, setRaceScheduleMap] = useState({});
+  const [savedPredictions, setSavedPredictions] = useState(EMPTY_PREDICTIONS);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const historyStateKeyRef = useRef('');
 
   const races = standings?.races?.length >= DEFAULT_RACES.length ? standings.races : DEFAULT_RACES;
   const racesWithStatus = races.map(normalizeRace);
-  const activeRaceId = racesWithStatus.find((race) => race.isOpen)?.id ?? null;
-  const filteredRaces = racesWithStatus.filter((race) => raceFilter === 'past' ? race.done : !race.done);
-  const canEditSelectedRace = selectedRace && !selectedRace.done && selectedRace.id === activeRaceId;
+  const defaultRaceFilter = getDefaultRaceFilter(racesWithStatus);
+  const activeRaceIdsKey = racesWithStatus.filter((race) => !race.done).map((race) => race.id).join(',');
+  const nextUpcomingRace = racesWithStatus.find((race) => !race.done && !race.isOngoing) || null;
+  const filteredRaces = racesWithStatus.filter((race) => {
+    if (raceFilter === 'past') return race.done;
+    if (raceFilter === 'ongoing') return race.isOngoing;
+    return !race.done && !race.isOngoing;
+  });
+  const sortedStandings = [...(standings?.standings || [])].sort((a, b) => {
+    const pointsDiff = Number(b.pointsTotal || 0) - Number(a.pointsTotal || 0);
+    if (pointsDiff !== 0) return pointsDiff;
+    return a.name.localeCompare(b.name, 'it');
+  });
+  const rankedStandings = buildStandingsWithRank(sortedStandings);
+  const groupedStandings = groupStandingsByRank(rankedStandings);
+  const hasSavedPrediction = !predictionsAreEqual(savedPredictions, EMPTY_PREDICTIONS);
+  const hasPredictionChanges = !predictionsAreEqual(predictions, savedPredictions);
+  const hasInvalidPodiumPredictions = hasDuplicatePodiumPredictions(predictions);
+  const canEditSelectedRace = Boolean(
+    selectedRace
+    && nextUpcomingRace
+    && selectedRace.id === nextUpcomingRace.id
+    && !selectedRace.done
+    && !selectedRace.isOngoing
+    && !raceLockInfo?.isLocked
+  );
   const currentRacePredictionsComplete = predictions.pole && predictions.first && predictions.second && predictions.third;
+  const canSubmitSelectedRace = Boolean(canEditSelectedRace && currentRacePredictionsComplete && !hasInvalidPodiumPredictions && hasPredictionChanges && !isSubmitting);
 
   useEffect(() => {
     if (currentUser) {
@@ -547,6 +767,7 @@ export default function App() {
           setSelectedRace(null);
           setOpenSection(null);
           setIsPredictionsOpen(false);
+          setRaceLockInfo(null);
         } else if (activeTab !== 'races') {
           setActiveTab('races');
         }
@@ -554,7 +775,7 @@ export default function App() {
       }
 
       setActiveTab(state.activeTab || 'races');
-      setRaceFilter(state.raceFilter || 'upcoming');
+      setRaceFilter(state.raceFilter || defaultRaceFilter);
 
       if (state.raceId) {
         const targetRace = racesWithStatus.find((race) => race.id === state.raceId);
@@ -568,12 +789,56 @@ export default function App() {
         setSelectedRace(null);
         setOpenSection(null);
         setIsPredictionsOpen(false);
+        setRaceLockInfo(null);
       }
     };
 
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [activeTab, raceFilter, racesWithStatus, selectedRace]);
+  }, [activeTab, raceFilter, racesWithStatus, selectedRace, defaultRaceFilter]);
+
+  useEffect(() => {
+    if (!selectedRace) {
+      setRaceFilter(defaultRaceFilter);
+    }
+  }, [defaultRaceFilter, selectedRace]);
+
+  useEffect(() => {
+    const racesToLoad = racesWithStatus.filter((race) => !race.done);
+    if (!racesToLoad.length) return;
+
+    let cancelled = false;
+    const missingRaces = racesToLoad.filter((race) => !raceScheduleMap[race.id]);
+    if (!missingRaces.length) return;
+
+    const loadSchedules = async () => {
+      for (const race of missingRaces) {
+        if (cancelled) return;
+
+        try {
+          const data = await apiFetchJson(`/race-schedule?raceId=${race.id}`);
+          if (!cancelled && data) {
+            setRaceScheduleMap((current) => ({
+              ...current,
+              [race.id]: data
+            }));
+          }
+        } catch {
+          // Ignore: the backend now returns safe fallbacks for rate limits.
+        }
+
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, 450);
+        });
+      }
+    };
+
+    loadSchedules();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRaceIdsKey, raceScheduleMap]);
 
   const handleLogin = (event) => {
     event.preventDefault();
@@ -596,16 +861,27 @@ export default function App() {
     setCurrentUser(null);
     setSelectedRace(null);
     setPredictions(EMPTY_PREDICTIONS);
+    setSavedPredictions(EMPTY_PREDICTIONS);
     setLoginPassword('');
     setLoginName('');
     setLoginError('');
+    setIsMenuOpen(false);
+    setRaceLockInfo(null);
   };
 
   useEffect(() => {
     setLoadingStandings(true);
     apiFetchJson('/standings')
-      .then((data) => {
-        setStandings(data);
+      .then(async (data) => {
+        try {
+          const publicStandings = await fetchPublicSheetTotals();
+          setStandings({
+            ...data,
+            standings: publicStandings
+          });
+        } catch {
+          setStandings(data);
+        }
         setStandingsError(null);
       })
       .catch((error) => {
@@ -619,25 +895,29 @@ export default function App() {
     setRacePredictionsError(null);
 
     try {
-      const data = await apiFetchJson(`/race-predictions?raceId=${race.id}`);
-      const nextPredictions = data.predictions || [];
+      const [predictionsData, lockData] = await Promise.all([
+        apiFetchJson(`/race-predictions?raceId=${race.id}`),
+        apiFetchJson(`/race-lock?raceId=${race.id}`).catch(() => null)
+      ]);
+      const nextPredictions = predictionsData.predictions || [];
       setRacePredictions(nextPredictions);
+      setRaceLockInfo(lockData?.success === false ? null : lockData);
 
-      if (canEditRace(race, activeRaceId) && currentUser) {
+      if (currentUser) {
         const own = nextPredictions.find((entry) => entry.player === currentUser);
-        setPredictions(own ? {
-          pole: own.pole || '',
-          first: own.first || '',
-          second: own.second || '',
-          third: own.third || ''
-        } : EMPTY_PREDICTIONS);
+        const nextOwnPredictions = normalizePredictionSet(own);
+        setSavedPredictions(nextOwnPredictions);
+        setPredictions(nextOwnPredictions);
       } else {
         setPredictions(EMPTY_PREDICTIONS);
+        setSavedPredictions(EMPTY_PREDICTIONS);
       }
     } catch (error) {
       setRacePredictions([]);
       setRacePredictionsError(`Impossibile caricare i pronostici di questa gara. ${error.message}`);
       setPredictions(EMPTY_PREDICTIONS);
+      setSavedPredictions(EMPTY_PREDICTIONS);
+      setRaceLockInfo(null);
     } finally {
       setRacePredictionsLoading(false);
     }
@@ -647,6 +927,7 @@ export default function App() {
     setSelectedRace(race);
     setOpenSection(null);
     setIsPredictionsOpen(false);
+    setIsMenuOpen(false);
     await loadRacePredictions(race);
   };
 
@@ -654,15 +935,30 @@ export default function App() {
     setSelectedRace(null);
     setOpenSection(null);
     setIsPredictionsOpen(false);
+    setIsMenuOpen(false);
+    setRaceLockInfo(null);
+    setSavedPredictions(EMPTY_PREDICTIONS);
     setActiveTab(tab);
   };
 
   const handleDriverSelect = (position, driverId) => {
+    if (isPodiumPosition(position)) {
+      const nextPredictions = {
+        ...predictions,
+        [position]: driverId
+      };
+
+      if (hasDuplicatePodiumPredictions(nextPredictions)) {
+        return;
+      }
+    }
+
     setPredictions((prev) => ({ ...prev, [position]: driverId }));
   };
 
   const submitPredictions = async () => {
     if (!currentUser || !selectedRace || !canEditSelectedRace) return;
+    if (hasInvalidPodiumPredictions) return;
 
     try {
       setIsSubmitting(true);
@@ -702,21 +998,47 @@ export default function App() {
           </div>
         </div>
 
-        {currentUser && (
-          <div className="flex items-center gap-2 bg-white/5 rounded-full pl-2 pr-4 py-1.5 border border-white/10">
-            <div className="w-6 h-6 rounded-full bg-f1-blue flex items-center justify-center">
-              <span className="text-white text-xs font-bold">{currentUser[0]}</span>
+        <div className="relative flex items-center gap-2">
+          {currentUser && (
+            <div className="flex items-center gap-2 bg-white/5 rounded-full pl-2 pr-3 py-1.5 border border-white/10">
+              <div className="w-6 h-6 rounded-full bg-f1-blue flex items-center justify-center">
+                <span className="text-white text-xs font-bold">{currentUser[0]}</span>
+              </div>
+              <span className="text-sm font-medium">{currentUser}</span>
             </div>
-            <span className="text-sm font-medium">{currentUser}</span>
-            <button
-              onClick={handleLogout}
-              className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"
-              aria-label="Logout"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        )}
+          )}
+
+          <button
+            onClick={() => setIsMenuOpen((value) => !value)}
+            className="w-9 h-9 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-zinc-300 hover:text-white hover:bg-white/10 transition-colors"
+            aria-label="Apri menu"
+          >
+            {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+          </button>
+
+          {isMenuOpen && (
+            <div className="absolute right-0 top-12 min-w-[220px] rounded-2xl border border-white/10 bg-zinc-950/95 backdrop-blur-xl shadow-2xl shadow-black/50 overflow-hidden">
+              <a
+                href={SHARED_SHEET_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-3 px-4 py-3 text-sm text-zinc-200 hover:bg-white/5 transition-colors"
+              >
+                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                Apri file condiviso
+              </a>
+              {currentUser && (
+                <button
+                  onClick={handleLogout}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-sm text-zinc-200 hover:bg-white/5 transition-colors border-t border-white/5"
+                >
+                  <LogOut className="w-4 h-4 text-zinc-400" />
+                  Logout
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </header>
 
       <main className="p-4 space-y-6">
@@ -805,6 +1127,12 @@ export default function App() {
 
                 <div className="flex gap-2 p-1 glass-panel rounded-lg">
                   <button
+                    onClick={() => setRaceFilter('ongoing')}
+                    className={clsx('flex-1 py-2 text-xs font-bold rounded-md transition-all', raceFilter === 'ongoing' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white')}
+                  >
+                    IN CORSO
+                  </button>
+                  <button
                     onClick={() => setRaceFilter('upcoming')}
                     className={clsx('flex-1 py-2 text-xs font-bold rounded-md transition-all', raceFilter === 'upcoming' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white')}
                   >
@@ -820,13 +1148,21 @@ export default function App() {
 
                 <div className="space-y-3">
                   {filteredRaces.map((race) => {
-                    const isOpenRace = race.id === activeRaceId && race.isOpen;
+                    const isNextAvailableRace = nextUpcomingRace?.id === race.id;
+                    const raceSchedule = raceScheduleMap[race.id];
+                    const qualifyingLabel = formatSessionDateTime(raceSchedule?.qualifying?.dateStart);
+                    const raceSessionLabel = formatSessionDateTime(raceSchedule?.raceSession?.dateStart);
+                    const weekendDayBadge = formatWeekendDayBadge(
+                      raceSchedule?.qualifying?.dateStart,
+                      raceSchedule?.raceSession?.dateStart,
+                      race.date
+                    );
                     return (
                       <div key={race.id} className="glass-panel rounded-xl overflow-hidden border border-white/5 group relative">
                         <div className="p-4 flex gap-4">
                           <div className="w-14 rounded-lg bg-black/40 border border-white/5 flex flex-col items-center justify-center p-2 text-center shadow-inner">
                             <span className="text-[10px] text-zinc-400 font-bold uppercase">{race.date.split(' ')[1]}</span>
-                            <span className="text-lg font-black leading-none">{race.date.split(' ')[0]}</span>
+                            <span className="text-lg font-black leading-none">{weekendDayBadge}</span>
                           </div>
 
                           <div className="flex-1">
@@ -839,7 +1175,16 @@ export default function App() {
                               <h4 className="font-bold text-lg leading-tight uppercase tracking-wide">{race.name.replace(' SPRINT', '')}</h4>
                             </div>
                             <div className="flex items-center gap-3 text-xs text-zinc-400 font-medium">
-                              <span className="flex items-center gap-1"><Timer className="w-3.5 h-3.5" /> {race.time}</span>
+                              <div className="flex flex-col gap-1">
+                                {qualifyingLabel && (
+                                  <span className="flex items-center gap-1">
+                                    <Timer className="w-3.5 h-3.5" /> Qualifica {qualifyingLabel}
+                                  </span>
+                                )}
+                                <span className="flex items-center gap-1">
+                                  <Calendar className="w-3.5 h-3.5" /> Gara {raceSessionLabel || `${race.date} • ${race.time}`}
+                                </span>
+                              </div>
                             </div>
                           </div>
 
@@ -853,16 +1198,21 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className={clsx('px-4 py-2 text-xs font-semibold flex items-center gap-1 border-t', isOpenRace ? 'bg-red-950/30 text-red-500 border-f1-red/10' : 'bg-white/5 text-zinc-400 border-white/5')}>
-                          {isOpenRace ? (
+                        <div className={clsx('px-4 py-2 text-xs font-semibold flex items-center gap-1 border-t', race.isOngoing ? 'bg-red-950/30 text-red-500 border-f1-red/10' : race.done ? 'bg-white/5 text-zinc-400 border-white/5' : isNextAvailableRace ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/10' : 'bg-white/5 text-zinc-500 border-white/5')}>
+                          {race.isOngoing ? (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-f1-red animate-pulse"></span>
-                              PRONOSTICI APERTI
+                              GARA IN CORSO
+                            </>
+                          ) : race.done ? (
+                            <>
+                              <Eye className="w-3.5 h-3.5 opacity-70" />
+                              VEDI PRONOSTICI INSERITI
                             </>
                           ) : (
                             <>
-                              <Eye className="w-3.5 h-3.5 opacity-70" />
-                              {race.done ? 'VEDI PRONOSTICI INSERITI' : 'IN ATTESA DI APERTURA'}
+                              <CheckCircle2 className="w-3.5 h-3.5 opacity-70" />
+                              {isNextAvailableRace ? 'PRONOSTICI DISPONIBILI' : 'NON ANCORA DISPONIBILI'}
                             </>
                           )}
                         </div>
@@ -884,22 +1234,41 @@ export default function App() {
                 <div className="space-y-3">
                   {loadingStandings && <p className="text-sm text-zinc-400">Caricamento classifica...</p>}
                   {standingsError && <p className="text-sm text-red-500">{standingsError}</p>}
-                  {standings?.standings?.map((player, idx) => (
-                    <div key={player.name} className="glass-panel flex items-center p-4 rounded-xl border border-white/5 relative overflow-hidden group">
+                  {groupedStandings.map((group) => (
+                    <div key={`${group.rank}-${group.pointsTotal}`} className="glass-panel flex items-center p-4 rounded-xl border border-white/5 relative overflow-hidden group">
                       <div className="w-8 flex justify-center font-black text-xl italic text-zinc-500">
-                        {idx + 1}
+                        {group.rank}
                       </div>
-                      <div className="flex-1 flex items-center gap-3 ml-2">
-                        <div className={clsx('w-10 h-10 rounded-full flex items-center justify-center font-bold shadow-lg', idx === 0 ? 'bg-yellow-500 text-black' : idx === 1 ? 'bg-zinc-300 text-black' : idx === 2 ? 'bg-orange-400 text-black' : 'bg-zinc-800 text-white')}>
-                          {player.avatar}
+                      <div className="flex-1 flex items-center gap-3 ml-2 min-w-0">
+                        <div className="flex -space-x-2">
+                          {group.players.map((player) => (
+                            <div
+                              key={player.name}
+                              className={clsx(
+                                'w-10 h-10 rounded-full flex items-center justify-center font-bold shadow-lg border-2 border-f1-darker',
+                                group.rank === 1 ? 'bg-yellow-500 text-black' : group.rank === 2 ? 'bg-zinc-300 text-black' : group.rank === 3 ? 'bg-orange-400 text-black' : 'bg-zinc-800 text-white'
+                              )}
+                            >
+                              {player.avatar}
+                            </div>
+                          ))}
                         </div>
-                        <div>
-                          <p className="font-bold text-lg leading-none group-hover:text-f1-red transition-colors">{player.name}</p>
-                          <p className="text-[10px] text-zinc-400 uppercase tracking-wider mt-1 border-b border-zinc-700 pb-0.5 inline-block">Scuderia Fanta</p>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-bold text-base leading-tight group-hover:text-f1-red transition-colors flex flex-wrap gap-x-2 gap-y-1">
+                            {group.players.map((player, index) => (
+                              <span key={player.name} className="break-words">
+                                {player.name}
+                                {index < group.players.length - 1 ? ' •' : ''}
+                              </span>
+                            ))}
+                          </div>
+                          <p className="text-[10px] text-zinc-400 uppercase tracking-wider mt-1 border-b border-zinc-700 pb-0.5 inline-block">
+                            {group.players.length > 1 ? 'Pari merito' : 'Scuderia Fanta'}
+                          </p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="font-black text-2xl text-white">{player.pointsTotal}</p>
+                        <p className="font-black text-2xl text-white">{group.pointsTotal}</p>
                         <p className="text-[9px] text-zinc-500 uppercase font-bold tracking-widest">Punti</p>
                       </div>
                     </div>
@@ -930,8 +1299,55 @@ export default function App() {
                   </div>
 
                   <div className="flex-1 overflow-y-auto px-2 sm:px-4 md:px-6 py-4 space-y-6">
+                    {raceLockInfo?.isLocked && (
+                      <div className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-amber-200">
+                          Pronostici bloccati
+                        </p>
+                        <p className="text-sm text-amber-50/80 mt-1">
+                          Le qualifiche sono iniziate, quindi per questa gara non puoi piu modificare il pronostico.
+                        </p>
+                      </div>
+                    )}
+
+                    {!canEditSelectedRace && hasSavedPrediction && (
+                      <>
+                        <div className="space-y-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-zinc-500 px-1">
+                            Il tuo pronostico
+                          </p>
+                          <PredictionGroup
+                            title="Qualifiche"
+                            accentClass="bg-white/5 text-zinc-200"
+                            items={[
+                              ['Pole Position', savedPredictions.pole]
+                            ]}
+                          />
+                        </div>
+
+                        <div className="space-y-3">
+                          <PredictionGroup
+                            title="Gara"
+                            accentClass="bg-white/5 text-zinc-200"
+                            items={[
+                              ['1° Classificato', savedPredictions.first],
+                              ['2° Classificato', savedPredictions.second],
+                              ['3° Classificato', savedPredictions.third]
+                            ]}
+                          />
+                        </div>
+                      </>
+                    )}
+
                     {canEditSelectedRace && (
                       <>
+                        {hasInvalidPodiumPredictions && (
+                          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3">
+                            <p className="text-sm text-red-200">
+                              1°, 2° e 3° classificato devono essere tre piloti diversi.
+                            </p>
+                          </div>
+                        )}
                         <div className="space-y-3">
                           <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-zinc-500 px-1">
                             Qualifiche • Pole Position
@@ -1024,15 +1440,21 @@ export default function App() {
                     <div className="px-6 py-4 bg-gradient-to-t from-black via-black/95 to-transparent border-t border-white/5">
                       <button
                         onClick={submitPredictions}
-                        disabled={!currentRacePredictionsComplete || isSubmitting}
+                        disabled={!canSubmitSelectedRace}
                         className={clsx(
                           'w-full py-4 rounded-xl font-black text-lg uppercase tracking-wider flex items-center justify-center gap-2 transition-all shadow-xl',
-                          currentRacePredictionsComplete && !isSubmitting
+                          canSubmitSelectedRace
                             ? 'bg-f1-red text-white hover:bg-red-700 shadow-f1-red/30 hover:-translate-y-1 active:scale-95 cursor-pointer'
                             : 'bg-white/5 text-zinc-600 cursor-not-allowed'
                         )}
                       >
-                        {isSubmitting ? 'Salvataggio...' : 'Conferma Pronostico'}
+                        {isSubmitting
+                          ? 'Salvataggio...'
+                          : hasSavedPrediction
+                            ? hasPredictionChanges
+                              ? 'Cambia Pronostico'
+                              : 'Pronostico Gia Salvato'
+                            : 'Conferma Pronostico'}
                         {!isSubmitting && <CheckCircle2 className="w-5 h-5" />}
                       </button>
                     </div>
@@ -1045,8 +1467,4 @@ export default function App() {
       </main>
     </div>
   );
-}
-
-function canEditRace(race, activeRaceId) {
-  return race.isOpen && race.id === activeRaceId;
 }

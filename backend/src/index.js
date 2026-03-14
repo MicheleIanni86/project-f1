@@ -2,6 +2,8 @@ import fallbackStandings from "../standings.json" with { type: "json" };
 
 const PLAYERS = ["Andrea", "Giovanni", "Luca", "Marco", "Michele", "Salvo"];
 const SCORE_COLUMNS = ["I", "J", "K", "L", "M", "N"];
+const SHEET_NAME = "Foglio1";
+const RACE_SCHEDULE_CACHE = new Map();
 const MONTH_MAP = {
     GEN: 0,
     FEB: 1,
@@ -16,8 +18,6 @@ const MONTH_MAP = {
     NOV: 10,
     DIC: 11,
 };
-const PREDICTION_OPENING_HOURS = 48;
-
 const RACES = [
     { id: 1, name: "AUSTRALIA", date: "07 MAR", time: "06:00", isSprint: false },
     { id: 2, name: "CINA SPRINT", date: "13 MAR", time: "08:30", isSprint: true },
@@ -85,7 +85,41 @@ function toRaceDate(race) {
     return new Date(2026, monthIndex, Number(day), hours, minutes);
 }
 
-function assertPredictionWindowOpen(raceId) {
+function addDays(date, amount) {
+    const next = new Date(date);
+    next.setDate(next.getDate() + amount);
+    return next;
+}
+
+function formatDateOnly(date) {
+    return date.toISOString().slice(0, 10);
+}
+
+function getExpectedSessionName(race) {
+    return race.isSprint ? "Sprint Qualifying" : "Qualifying";
+}
+
+function getRaceSessionName(race) {
+    return race.isSprint ? "Sprint" : "Race";
+}
+
+async function fetchJson(url, { allowNoResults = false } = {}) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        const text = await response.text();
+        if (
+            allowNoResults &&
+            response.status === 400 &&
+            text.toLowerCase().includes("no results found")
+        ) {
+            return [];
+        }
+        throw new Error(`Errore fetch ${response.status}: ${text}`);
+    }
+    return response.json();
+}
+
+async function getPredictionLockInfo(raceId) {
     const race = getRaceById(raceId);
     if (!race) {
         throw new Error("Gara non supportata");
@@ -96,15 +130,125 @@ function assertPredictionWindowOpen(raceId) {
         throw new Error("Deadline gara non configurata");
     }
 
-    const opensAt = new Date(deadline.getTime() - PREDICTION_OPENING_HOURS * 60 * 60 * 1000);
-    const now = new Date();
+    const sessionName = getExpectedSessionName(race);
+    const startDate = formatDateOnly(addDays(deadline, -3));
+    const endDate = formatDateOnly(addDays(deadline, 1));
+    const url = `https://api.openf1.org/v1/sessions?year=2026&session_name=${encodeURIComponent(
+        sessionName,
+    )}&date_start>=${encodeURIComponent(startDate)}&date_start<=${encodeURIComponent(endDate)}`;
+    const sessions = await fetchJson(url, { allowNoResults: true });
+    const normalizedSessions = Array.isArray(sessions)
+        ? sessions
+              .map((session) => ({
+                  ...session,
+                  dateStart: session.date_start ? new Date(session.date_start) : null,
+              }))
+              .filter((session) => session.dateStart instanceof Date && !Number.isNaN(session.dateStart.valueOf()))
+        : [];
 
-    if (now < opensAt) {
-        throw new Error("Pronostici non ancora aperti per questa gara");
+    const eligibleSessions = normalizedSessions
+        .filter((session) => session.dateStart <= deadline)
+        .sort((a, b) => b.dateStart - a.dateStart);
+    const selectedSession = eligibleSessions[0] || normalizedSessions.sort((a, b) => b.dateStart - a.dateStart)[0] || null;
+    const now = new Date();
+    const lockAt = selectedSession?.dateStart || deadline;
+
+    return {
+        raceId,
+        raceName: race.name,
+        sessionName,
+        lockAt: lockAt.toISOString(),
+        source: selectedSession ? "openf1" : "race_deadline_fallback",
+        isLocked: now >= lockAt,
+    };
+}
+
+async function getRaceScheduleInfo(raceId) {
+    const race = getRaceById(raceId);
+    if (!race) {
+        throw new Error("Gara non supportata");
     }
 
-    if (now >= deadline) {
+    if (RACE_SCHEDULE_CACHE.has(raceId)) {
+        return RACE_SCHEDULE_CACHE.get(raceId);
+    }
+
+    const deadline = toRaceDate(race);
+    if (!deadline) {
+        throw new Error("Deadline gara non configurata");
+    }
+
+    const startDate = formatDateOnly(addDays(deadline, -3));
+    const endDate = formatDateOnly(addDays(deadline, 1));
+    const qualifyingSessionName = getExpectedSessionName(race);
+    const raceSessionName = getRaceSessionName(race);
+
+    const [qualifyingSessions, raceSessions] = await Promise.all([
+        fetchJson(
+            `https://api.openf1.org/v1/sessions?year=2026&session_name=${encodeURIComponent(
+                qualifyingSessionName,
+            )}&date_start>=${encodeURIComponent(startDate)}&date_start<=${encodeURIComponent(endDate)}`,
+            { allowNoResults: true },
+        ),
+        fetchJson(
+            `https://api.openf1.org/v1/sessions?year=2026&session_name=${encodeURIComponent(
+                raceSessionName,
+            )}&date_start>=${encodeURIComponent(startDate)}&date_start<=${encodeURIComponent(endDate)}`,
+            { allowNoResults: true },
+        ),
+    ]);
+
+    const normalizeSessions = (sessions) =>
+        (Array.isArray(sessions) ? sessions : [])
+            .map((session) => ({
+                ...session,
+                dateStart: session.date_start ? new Date(session.date_start) : null,
+            }))
+            .filter((session) => session.dateStart instanceof Date && !Number.isNaN(session.dateStart.valueOf()))
+            .sort((a, b) => a.dateStart - b.dateStart);
+
+    const qualifying = normalizeSessions(qualifyingSessions)[0] || null;
+    const raceSession = normalizeSessions(raceSessions)[0] || null;
+
+    const payload = {
+        raceId,
+        raceName: race.name,
+        qualifying: qualifying
+            ? {
+                  sessionName: qualifying.session_name,
+                  dateStart: qualifying.date_start,
+                  dateEnd: qualifying.date_end,
+                  countryName: qualifying.country_name,
+                  location: qualifying.location,
+              }
+            : null,
+        raceSession: raceSession
+            ? {
+                  sessionName: raceSession.session_name,
+                  dateStart: raceSession.date_start,
+                  dateEnd: raceSession.date_end,
+                  countryName: raceSession.country_name,
+                  location: raceSession.location,
+              }
+            : null,
+    };
+
+    RACE_SCHEDULE_CACHE.set(raceId, payload);
+    return payload;
+}
+
+async function assertPredictionWindowOpen(raceId) {
+    const race = getRaceById(raceId);
+    const deadline = toRaceDate(race);
+    const now = new Date();
+
+    if (deadline && now >= deadline) {
         throw new Error("Pronostici chiusi per questa gara");
+    }
+
+    const lockInfo = await getPredictionLockInfo(raceId);
+    if (lockInfo.isLocked) {
+        throw new Error("Pronostici bloccati: qualifiche gia iniziate");
     }
 }
 
@@ -220,6 +364,80 @@ async function readRange({ sheetId, accessToken, range }) {
     return res.json();
 }
 
+function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let cell = "";
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        const next = text[i + 1];
+
+        if (char === '"') {
+            if (inQuotes && next === '"') {
+                cell += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+
+        if (char === "," && !inQuotes) {
+            row.push(cell);
+            cell = "";
+            continue;
+        }
+
+        if ((char === "\n" || char === "\r") && !inQuotes) {
+            if (char === "\r" && next === "\n") {
+                i++;
+            }
+            row.push(cell);
+            rows.push(row);
+            row = [];
+            cell = "";
+            continue;
+        }
+
+        cell += char;
+    }
+
+    if (cell.length > 0 || row.length > 0) {
+        row.push(cell);
+        rows.push(row);
+    }
+
+    return rows;
+}
+
+async function readPublicRange({ sheetId, range, sheetName = SHEET_NAME }) {
+    const url = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(
+        sheetName,
+    )}&range=${encodeURIComponent(range)}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Errore lettura pubblica Sheets: ${res.status} ${text}`);
+    }
+
+    const text = await res.text();
+    return { values: parseCsv(text) };
+}
+
+async function readSheetRange({ sheetId, accessToken, range }) {
+    if (accessToken) {
+        try {
+            return await readRange({ sheetId, accessToken, range });
+        } catch (error) {
+            console.warn(`Lettura autenticata fallita per ${range}, provo accesso pubblico`, error.message);
+        }
+    }
+
+    return readPublicRange({ sheetId, range });
+}
+
 async function writeValue({ sheetId, accessToken, range, value }) {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
         range,
@@ -254,6 +472,13 @@ function buildStandingsPayload(sourceStandings, races = [], midSeasonPredictions
             avatar: name[0].toUpperCase(),
             pointsTotal: Number(playerStanding?.pointsTotal || 0),
         };
+    }).sort((a, b) => {
+        const pointsDiff = b.pointsTotal - a.pointsTotal;
+        if (pointsDiff !== 0) {
+            return pointsDiff;
+        }
+
+        return a.name.localeCompare(b.name, "it");
     });
 
     return {
@@ -280,7 +505,7 @@ function getFallbackPayload() {
 
 function getScoreRange(raceId) {
     const rows = getRaceRows(raceId);
-    return `Foglio1!${SCORE_COLUMNS[0]}${rows.pole}:${SCORE_COLUMNS[SCORE_COLUMNS.length - 1]}${rows.pole}`;
+    return `${SHEET_NAME}!${SCORE_COLUMNS[0]}${rows.pole}:${SCORE_COLUMNS[SCORE_COLUMNS.length - 1]}${rows.pole}`;
 }
 
 function buildStandingsFromTotalsRow(totalsRow = []) {
@@ -336,6 +561,16 @@ function buildRacePredictionsPayload(raceId, values = []) {
     };
 }
 
+function validatePredictions(predictions) {
+    const podium = [predictions.first, predictions.second, predictions.third]
+        .map((value) => (value || "").toString().trim())
+        .filter(Boolean);
+
+    if (new Set(podium).size !== podium.length) {
+        throw new Error("1, 2 e 3 classificato devono essere piloti diversi");
+    }
+}
+
 function jsonResponse(payload, corsHeaders, status = 200) {
     return new Response(JSON.stringify(payload), {
         status,
@@ -370,12 +605,13 @@ export default {
                 if (!predictions || typeof predictions !== "object") {
                     throw new Error("Pronostici mancanti o non validi");
                 }
+                validatePredictions(predictions);
 
                 const raceIdNumber = Number(raceId);
                 if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
                     throw new Error("Gara non supportata");
                 }
-                assertPredictionWindowOpen(raceIdNumber);
+                await assertPredictionWindowOpen(raceIdNumber);
 
                 const rows = getRaceRows(raceIdNumber);
                 const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
@@ -385,7 +621,7 @@ export default {
                 for (const pos of positions) {
                     const row = rows[pos];
                     const value = predictions[pos] || "";
-                    const range = `Foglio1!${col}${row}`;
+                    const range = `${SHEET_NAME}!${col}${row}`;
                     await writeValue({ sheetId: SHEET_ID, accessToken, range, value });
                 }
 
@@ -399,22 +635,82 @@ export default {
             }
         }
 
+        if (url.pathname === "/race-lock" && request.method === "GET") {
+            const raceIdNumber = Number(url.searchParams.get("raceId"));
+
+            if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
+                return jsonResponse(
+                    { success: false, error: "Parametro raceId non valido" },
+                    corsHeaders,
+                    400,
+                );
+            }
+
+            try {
+                const lockInfo = await getPredictionLockInfo(raceIdNumber);
+                return jsonResponse({ success: true, ...lockInfo }, corsHeaders);
+            } catch (err) {
+                console.error(err);
+                return jsonResponse(
+                    { success: false, error: err.message },
+                    corsHeaders,
+                    400,
+                );
+            }
+        }
+
+        if (url.pathname === "/race-schedule" && request.method === "GET") {
+            const raceIdNumber = Number(url.searchParams.get("raceId"));
+
+            if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
+                return jsonResponse(
+                    { success: false, error: "Parametro raceId non valido" },
+                    corsHeaders,
+                    400,
+                );
+            }
+
+            try {
+                const scheduleInfo = await getRaceScheduleInfo(raceIdNumber);
+                return jsonResponse({ success: true, ...scheduleInfo }, corsHeaders);
+            } catch (err) {
+                console.error(err);
+                if (err.message.includes("429")) {
+                    const race = getRaceById(raceIdNumber);
+                    return jsonResponse(
+                        {
+                            success: true,
+                            raceId: raceIdNumber,
+                            raceName: race?.name || "",
+                            qualifying: null,
+                            raceSession: null,
+                            warning: "Rate limit OpenF1, uso fallback vuoto temporaneo",
+                        },
+                        corsHeaders,
+                    );
+                }
+                return jsonResponse(
+                    { success: false, error: err.message },
+                    corsHeaders,
+                    400,
+                );
+            }
+        }
+
         if (url.pathname === "/standings" && request.method === "GET") {
             try {
-                if (!GOOGLE_SERVICE_ACCOUNT_JSON) {
-                    return jsonResponse(getFallbackPayload(), corsHeaders);
-                }
-
-                const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
-                const totalsRes = await readRange({
+                const accessToken = GOOGLE_SERVICE_ACCOUNT_JSON
+                    ? await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON)
+                    : null;
+                const totalsRes = await readSheetRange({
                     sheetId: SHEET_ID,
                     accessToken,
-                    range: "Foglio1!Q14:V14",
+                    range: `${SHEET_NAME}!Q14:V14`,
                 });
                 const raceScoreRanges = RACES.map((race) => getScoreRange(race.id));
                 const raceScoresRes = await Promise.all(
                     raceScoreRanges.map((range) =>
-                        readRange({
+                        readSheetRange({
                             sheetId: SHEET_ID,
                             accessToken,
                             range,
@@ -454,14 +750,12 @@ export default {
             }
 
             try {
-                if (!GOOGLE_SERVICE_ACCOUNT_JSON) {
-                    return jsonResponse(getEmptyRacePredictions(raceIdNumber), corsHeaders);
-                }
-
-                const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
+                const accessToken = GOOGLE_SERVICE_ACCOUNT_JSON
+                    ? await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON)
+                    : null;
                 const rows = getRaceRows(raceIdNumber);
-                const raceRange = `Foglio1!A${rows.pole}:H${rows.third}`;
-                const raceRes = await readRange({
+                const raceRange = `${SHEET_NAME}!A${rows.pole}:H${rows.third}`;
+                const raceRes = await readSheetRange({
                     sheetId: SHEET_ID,
                     accessToken,
                     range: raceRange,
