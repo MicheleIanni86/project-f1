@@ -2,6 +2,21 @@ import fallbackStandings from "../standings.json" with { type: "json" };
 
 const PLAYERS = ["Andrea", "Giovanni", "Luca", "Marco", "Michele", "Salvo"];
 const SCORE_COLUMNS = ["I", "J", "K", "L", "M", "N"];
+const MONTH_MAP = {
+    GEN: 0,
+    FEB: 1,
+    MAR: 2,
+    APR: 3,
+    MAG: 4,
+    GIU: 5,
+    LUG: 6,
+    AGO: 7,
+    SET: 8,
+    OTT: 9,
+    NOV: 10,
+    DIC: 11,
+};
+const PREDICTION_OPENING_HOURS = 48;
 
 const RACES = [
     { id: 1, name: "AUSTRALIA", date: "07 MAR", time: "06:00", isSprint: false },
@@ -53,6 +68,44 @@ function getRaceRows(raceId) {
         second: base + 2,
         third: base + 3,
     };
+}
+
+function getRaceById(raceId) {
+    return RACES.find((race) => race.id === raceId) || null;
+}
+
+function toRaceDate(race) {
+    const [day, month] = race.date.split(" ");
+    const monthIndex = MONTH_MAP[month];
+    if (monthIndex === undefined) {
+        return null;
+    }
+
+    const [hours, minutes] = race.time.split(":").map(Number);
+    return new Date(2026, monthIndex, Number(day), hours, minutes);
+}
+
+function assertPredictionWindowOpen(raceId) {
+    const race = getRaceById(raceId);
+    if (!race) {
+        throw new Error("Gara non supportata");
+    }
+
+    const deadline = toRaceDate(race);
+    if (!deadline) {
+        throw new Error("Deadline gara non configurata");
+    }
+
+    const opensAt = new Date(deadline.getTime() - PREDICTION_OPENING_HOURS * 60 * 60 * 1000);
+    const now = new Date();
+
+    if (now < opensAt) {
+        throw new Error("Pronostici non ancora aperti per questa gara");
+    }
+
+    if (now >= deadline) {
+        throw new Error("Pronostici chiusi per questa gara");
+    }
 }
 
 async function getAccessToken(googleServiceAccountJson) {
@@ -322,6 +375,7 @@ export default {
                 if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
                     throw new Error("Gara non supportata");
                 }
+                assertPredictionWindowOpen(raceIdNumber);
 
                 const rows = getRaceRows(raceIdNumber);
                 const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);

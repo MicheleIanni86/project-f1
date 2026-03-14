@@ -40,3 +40,12 @@
   background-size: 100% 100%, 100% 100%, 18px 18px, 18px 18px;
   background-position: 0 0, 0 0, 0 0, 9px 9px;
 }
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

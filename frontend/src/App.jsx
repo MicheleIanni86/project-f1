@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Trophy, ChevronRight, User, Calendar, Flame, Timer, CheckCircle2, Eye, Lock, LogOut } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -59,6 +59,10 @@ const API_BASES = Array.from(
   new Set([import.meta.env.VITE_API_BASE_URL, DEFAULT_API_BASE].filter(Boolean))
 );
 const EMPTY_PREDICTIONS = { pole: '', first: '', second: '', third: '' };
+const STORAGE_KEYS = {
+  currentUser: 'f1nta-current-user'
+};
+const PREDICTION_OPENING_HOURS = 48;
 
 function toRaceDate(race) {
   const [day, month] = race.date.split(' ');
@@ -69,10 +73,15 @@ function toRaceDate(race) {
 }
 
 function normalizeRace(race) {
-  const raceDate = toRaceDate(race);
+  const deadline = toRaceDate(race);
+  const opensAt = deadline ? new Date(deadline.getTime() - PREDICTION_OPENING_HOURS * 60 * 60 * 1000) : null;
+  const now = new Date();
   return {
     ...race,
-    done: raceDate ? raceDate < new Date() : false
+    deadline,
+    opensAt,
+    done: deadline ? deadline < now : false,
+    isOpen: deadline && opensAt ? now >= opensAt && now < deadline : false
   };
 }
 
@@ -138,30 +147,30 @@ function PredictionTile({ label, value }) {
 
   if (!driver) {
     return (
-      <div className="rounded-xl bg-black/30 border border-white/5 p-3">
-        <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">{label}</p>
-        <p className="font-semibold text-sm text-zinc-100">{formatPrediction(value)}</p>
+      <div className="rounded-lg bg-black/30 border border-white/5 p-2 sm:p-3">
+        <p className="text-[9px] sm:text-[10px] text-zinc-500 uppercase tracking-wider mb-1">{label}</p>
+        <p className="font-semibold text-[12px] sm:text-sm text-zinc-100 leading-tight">{formatPrediction(value)}</p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-xl bg-black/30 border border-white/5 p-3 relative overflow-hidden min-h-[92px]">
+    <div className="rounded-lg bg-black/30 border border-white/5 p-2 sm:p-3 relative overflow-hidden min-h-[72px] sm:min-h-[92px]">
       <div
         className="absolute inset-y-0 left-0 w-1"
         style={{ backgroundColor: driver.hex }}
       />
       <div className="relative z-10">
-        <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2">{label}</p>
+        <p className="text-[9px] sm:text-[10px] text-zinc-500 uppercase tracking-wider mb-1.5 sm:mb-2">{label}</p>
         <div className="flex items-center gap-2">
-          <div className="w-11 h-11 rounded-xl bg-black/40 border border-white/10 overflow-hidden shrink-0">
+          <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-lg sm:rounded-xl bg-black/40 border border-white/10 overflow-hidden shrink-0">
             {driver.img && (
               <img src={driver.img} alt={driver.name} className="w-full h-full object-cover object-top" />
             )}
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-sm text-zinc-100 truncate">{driver.name.split(' ').pop()}</p>
-            <p className="text-[10px] text-zinc-500 truncate">{driver.team}</p>
+            <p className="font-semibold text-[12px] sm:text-sm text-zinc-100 truncate leading-tight">{driver.name.split(' ').pop()}</p>
+            <p className="text-[9px] sm:text-[10px] text-zinc-500 truncate leading-tight">{driver.team}</p>
           </div>
         </div>
       </div>
@@ -171,11 +180,11 @@ function PredictionTile({ label, value }) {
 
 function PredictionGroup({ title, accentClass, items }) {
   return (
-    <div className="rounded-2xl border border-white/8 bg-white/[0.03] overflow-hidden">
-      <div className={clsx('px-3 py-2 border-b border-white/8', accentClass)}>
-        <p className="text-[10px] font-black uppercase tracking-[0.28em]">{title}</p>
+    <div className="rounded-xl sm:rounded-2xl border border-white/8 bg-white/[0.03] overflow-hidden">
+      <div className={clsx('px-2.5 sm:px-3 py-1.5 sm:py-2 border-b border-white/8', accentClass)}>
+        <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-[0.24em] sm:tracking-[0.28em]">{title}</p>
       </div>
-      <div className="p-3 grid gap-2 grid-cols-1 sm:grid-cols-2">
+      <div className="p-2 sm:p-3 grid gap-2 grid-cols-1 sm:grid-cols-2">
         {items.map(([label, value]) => (
           <PredictionTile key={label} label={label} value={value} />
         ))}
@@ -185,39 +194,196 @@ function PredictionGroup({ title, accentClass, items }) {
 }
 
 function RacePredictionsBoard({ predictions, compact = false }) {
+  const [activePlayer, setActivePlayer] = useState(predictions[0]?.player || null);
+  const touchStartXRef = useRef(null);
+  const tabsScrollRef = useRef(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  useEffect(() => {
+    if (!predictions.some((entry) => entry.player === activePlayer)) {
+      setActivePlayer(predictions[0]?.player || null);
+    }
+  }, [predictions, activePlayer]);
+
+  const selectedEntry = predictions.find((entry) => entry.player === activePlayer) || predictions[0] || null;
+  const activeIndex = predictions.findIndex((entry) => entry.player === selectedEntry?.player);
+
+  const updateScrollHints = () => {
+    const node = tabsScrollRef.current;
+    if (!node) return;
+    setCanScrollLeft(node.scrollLeft > 4);
+    setCanScrollRight(node.scrollLeft + node.clientWidth < node.scrollWidth - 4);
+  };
+
+  useEffect(() => {
+    updateScrollHints();
+  }, [predictions]);
+
+  const moveSelection = (direction) => {
+    if (!predictions.length || activeIndex === -1) return;
+    const nextIndex = activeIndex + direction;
+    if (nextIndex < 0 || nextIndex >= predictions.length) return;
+    setActivePlayer(predictions[nextIndex].player);
+  };
+
+  const handleTouchStart = (event) => {
+    touchStartXRef.current = event.changedTouches[0]?.clientX ?? null;
+  };
+
+  const handleTouchEnd = (event) => {
+    const startX = touchStartXRef.current;
+    const endX = event.changedTouches[0]?.clientX ?? null;
+    touchStartXRef.current = null;
+
+    if (startX == null || endX == null) return;
+    const deltaX = endX - startX;
+    if (Math.abs(deltaX) < 40) return;
+    moveSelection(deltaX < 0 ? 1 : -1);
+  };
+
   return (
     <div className={clsx('space-y-3', compact && 'space-y-2')}>
-      {predictions.map((entry) => (
-        <div key={entry.player} className="glass-panel rounded-2xl border border-white/10 p-4">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-white">
-              {entry.avatar || playerInitial(entry.player)}
+      <div className="md:hidden space-y-3">
+        <div className="relative rounded-2xl border border-white/8 bg-black/25 p-1.5">
+          {canScrollLeft && (
+            <div className="absolute left-2 top-1/2 -translate-y-1/2 z-10 pointer-events-none">
+              <div className="w-6 h-6 rounded-full bg-black/70 border border-white/10 text-white/80 flex items-center justify-center shadow-lg">
+                <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+              </div>
             </div>
-            <div>
-              <p className="font-bold text-sm">{entry.player}</p>
-              <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Pronostico</p>
+          )}
+          {canScrollRight && (
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 z-10 pointer-events-none">
+              <div className="w-6 h-6 rounded-full bg-black/70 border border-white/10 text-white/80 flex items-center justify-center shadow-lg">
+                <ChevronRight className="w-3.5 h-3.5" />
+              </div>
             </div>
-          </div>
-          <div className={clsx('space-y-3', compact && 'space-y-2')}>
-            <PredictionGroup
-              title="Qualifica"
-              accentClass="bg-cyan-500/12 text-cyan-200"
-              items={[
-                ['Pole Position', entry.pole]
-              ]}
-            />
-            <PredictionGroup
-              title="Gara"
-              accentClass="bg-amber-500/12 text-amber-200"
-              items={[
-                ['1° posto', entry.first],
-                ['2° posto', entry.second],
-                ['3° posto', entry.third]
-              ]}
-            />
-          </div>
+          )}
+          <div
+            ref={tabsScrollRef}
+            onScroll={updateScrollHints}
+            className="flex gap-2 overflow-x-auto snap-x snap-mandatory no-scrollbar"
+          >
+          {predictions.map((entry) => (
+            <button
+              key={entry.player}
+              type="button"
+              onClick={() => setActivePlayer(entry.player)}
+              className={clsx(
+                'snap-start shrink-0 rounded-2xl px-3 py-2 text-left transition-all',
+                activePlayer === entry.player
+                  ? 'bg-white text-black shadow-lg'
+                  : 'bg-transparent text-zinc-300'
+              )}
+            >
+              <p className="font-semibold text-[11px] leading-none whitespace-nowrap">{entry.player}</p>
+            </button>
+          ))}
         </div>
-      ))}
+        </div>
+
+        {selectedEntry && (
+          <div
+            className="glass-panel rounded-xl border border-white/10 p-3 overflow-hidden min-h-[66vh] flex flex-col"
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
+          >
+            <div className="flex items-center gap-2.5 mb-3">
+              <div className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-[12px] text-white shadow-lg">
+                {selectedEntry.avatar || playerInitial(selectedEntry.player)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-[13px] leading-tight">{selectedEntry.player}</p>
+                <p className="text-[9px] text-zinc-500 uppercase tracking-[0.18em]">Pronostico selezionato</p>
+              </div>
+              <div className="text-[9px] text-zinc-500 uppercase tracking-[0.14em]">
+                {activeIndex + 1}/{predictions.length}
+              </div>
+            </div>
+            <div className="flex-1 space-y-3">
+              <PredictionGroup
+                title="Qualifica"
+                accentClass="bg-cyan-500/12 text-cyan-200"
+                items={[
+                  ['Pole Position', selectedEntry.pole]
+                ]}
+              />
+              <PredictionGroup
+                title="Gara"
+                accentClass="bg-amber-500/12 text-amber-200"
+                items={[
+                  ['1° posto', selectedEntry.first],
+                  ['2° posto', selectedEntry.second],
+                  ['3° posto', selectedEntry.third]
+                ]}
+              />
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => moveSelection(-1)}
+                disabled={activeIndex <= 0}
+                className={clsx(
+                  'flex-1 rounded-xl px-3 py-2.5 text-[11px] font-bold uppercase tracking-[0.18em] transition-all',
+                  activeIndex <= 0
+                    ? 'bg-white/5 text-zinc-600 cursor-not-allowed'
+                    : 'bg-white/10 text-white'
+                )}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                onClick={() => moveSelection(1)}
+                disabled={activeIndex === -1 || activeIndex >= predictions.length - 1}
+                className={clsx(
+                  'flex-1 rounded-xl px-3 py-2.5 text-[11px] font-bold uppercase tracking-[0.18em] transition-all',
+                  activeIndex === -1 || activeIndex >= predictions.length - 1
+                    ? 'bg-white/5 text-zinc-600 cursor-not-allowed'
+                    : 'bg-f1-red text-white shadow-lg shadow-f1-red/20'
+                )}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="hidden md:grid gap-3">
+        {predictions.map((entry) => (
+          <div key={entry.player} className="glass-panel rounded-2xl border border-white/10 p-4">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center font-bold text-white">
+                {entry.avatar || playerInitial(entry.player)}
+              </div>
+              <div>
+                <p className="font-bold text-sm">{entry.player}</p>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider">Pronostico</p>
+              </div>
+            </div>
+            <div className={clsx('grid gap-3', compact ? 'grid-cols-1' : 'grid-cols-1 lg:grid-cols-2')}>
+              <PredictionGroup
+                title="Qualifica"
+                accentClass="bg-cyan-500/12 text-cyan-200"
+                items={[
+                  ['Pole Position', entry.pole]
+                ]}
+              />
+              <PredictionGroup
+                title="Gara"
+                accentClass="bg-amber-500/12 text-amber-200"
+                items={[
+                  ['1° posto', entry.first],
+                  ['2° posto', entry.second],
+                  ['3° posto', entry.third]
+                ]}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -314,7 +480,10 @@ function DriverPicker({ title, icon, position, predictions, openSection, setOpen
 }
 
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = window.localStorage.getItem(STORAGE_KEYS.currentUser);
+    return PLAYERS.includes(savedUser) ? savedUser : null;
+  });
   const [loginName, setLoginName] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -331,13 +500,80 @@ export default function App() {
   const [racePredictions, setRacePredictions] = useState([]);
   const [racePredictionsLoading, setRacePredictionsLoading] = useState(false);
   const [racePredictionsError, setRacePredictionsError] = useState(null);
+  const historyStateKeyRef = useRef('');
 
   const races = standings?.races?.length >= DEFAULT_RACES.length ? standings.races : DEFAULT_RACES;
   const racesWithStatus = races.map(normalizeRace);
-  const activeRaceId = racesWithStatus.find((race) => !race.done)?.id ?? null;
+  const activeRaceId = racesWithStatus.find((race) => race.isOpen)?.id ?? null;
   const filteredRaces = racesWithStatus.filter((race) => raceFilter === 'past' ? race.done : !race.done);
   const canEditSelectedRace = selectedRace && !selectedRace.done && selectedRace.id === activeRaceId;
   const currentRacePredictionsComplete = predictions.pole && predictions.first && predictions.second && predictions.third;
+
+  useEffect(() => {
+    if (currentUser) {
+      window.localStorage.setItem(STORAGE_KEYS.currentUser, currentUser);
+    } else {
+      window.localStorage.removeItem(STORAGE_KEYS.currentUser);
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    const nextState = {
+      app: 'f1nta',
+      activeTab,
+      raceFilter,
+      raceId: selectedRace?.id ?? null
+    };
+    const nextKey = JSON.stringify(nextState);
+
+    if (historyStateKeyRef.current === '') {
+      window.history.replaceState(nextState, '');
+      historyStateKeyRef.current = nextKey;
+      return;
+    }
+
+    if (historyStateKeyRef.current !== nextKey) {
+      window.history.pushState(nextState, '');
+      historyStateKeyRef.current = nextKey;
+    }
+  }, [activeTab, raceFilter, selectedRace]);
+
+  useEffect(() => {
+    const onPopState = async (event) => {
+      const state = event.state;
+
+      if (!state || state.app !== 'f1nta') {
+        if (selectedRace) {
+          setSelectedRace(null);
+          setOpenSection(null);
+          setIsPredictionsOpen(false);
+        } else if (activeTab !== 'races') {
+          setActiveTab('races');
+        }
+        return;
+      }
+
+      setActiveTab(state.activeTab || 'races');
+      setRaceFilter(state.raceFilter || 'upcoming');
+
+      if (state.raceId) {
+        const targetRace = racesWithStatus.find((race) => race.id === state.raceId);
+        if (targetRace) {
+          setSelectedRace(targetRace);
+          setOpenSection(null);
+          setIsPredictionsOpen(false);
+          await loadRacePredictions(targetRace);
+        }
+      } else {
+        setSelectedRace(null);
+        setOpenSection(null);
+        setIsPredictionsOpen(false);
+      }
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, [activeTab, raceFilter, racesWithStatus, selectedRace]);
 
   const handleLogin = (event) => {
     event.preventDefault();
@@ -412,6 +648,13 @@ export default function App() {
     setOpenSection(null);
     setIsPredictionsOpen(false);
     await loadRacePredictions(race);
+  };
+
+  const changeTab = (tab) => {
+    setSelectedRace(null);
+    setOpenSection(null);
+    setIsPredictionsOpen(false);
+    setActiveTab(tab);
   };
 
   const handleDriverSelect = (position, driverId) => {
@@ -539,13 +782,13 @@ export default function App() {
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 space-y-6">
             <div className="flex gap-2 p-1 glass-panel rounded-lg">
               <button
-                onClick={() => setActiveTab('races')}
+                onClick={() => changeTab('races')}
                 className={clsx('flex-1 py-2 text-sm font-bold rounded-md transition-all', activeTab === 'races' ? 'bg-f1-red text-white shadow-lg shadow-f1-red/20' : 'text-zinc-400 hover:text-white')}
               >
                 GARE
               </button>
               <button
-                onClick={() => setActiveTab('standings')}
+                onClick={() => changeTab('standings')}
                 className={clsx('flex-1 py-2 text-sm font-bold rounded-md transition-all', activeTab === 'standings' ? 'bg-f1-red text-white shadow-lg shadow-f1-red/20' : 'text-zinc-400 hover:text-white')}
               >
                 CLASSIFICA
@@ -577,7 +820,7 @@ export default function App() {
 
                 <div className="space-y-3">
                   {filteredRaces.map((race) => {
-                    const isOpenRace = race.id === activeRaceId && !race.done;
+                    const isOpenRace = race.id === activeRaceId && race.isOpen;
                     return (
                       <div key={race.id} className="glass-panel rounded-xl overflow-hidden border border-white/5 group relative">
                         <div className="p-4 flex gap-4">
@@ -619,7 +862,7 @@ export default function App() {
                           ) : (
                             <>
                               <Eye className="w-3.5 h-3.5 opacity-70" />
-                              {race.done ? 'VEDI PRONOSTICI INSERITI' : 'VEDI GARA E PRONOSTICI'}
+                              {race.done ? 'VEDI PRONOSTICI INSERITI' : 'IN ATTESA DI APERTURA'}
                             </>
                           )}
                         </div>
@@ -767,7 +1010,9 @@ export default function App() {
                             {racePredictionsLoading && <p className="text-sm text-zinc-200 px-1">Caricamento pronostici...</p>}
                             {racePredictionsError && <p className="text-sm text-red-300 px-1">{racePredictionsError}</p>}
                             {!racePredictionsLoading && !racePredictionsError && (
-                              <RacePredictionsBoard predictions={racePredictions} compact={canEditSelectedRace} />
+                              <div className="pr-1">
+                                <RacePredictionsBoard predictions={racePredictions} compact={canEditSelectedRace} />
+                              </div>
                             )}
                           </div>
                         )}
@@ -803,5 +1048,5 @@ export default function App() {
 }
 
 function canEditRace(race, activeRaceId) {
-  return !race.done && race.id === activeRaceId;
+  return race.isOpen && race.id === activeRaceId;
 }

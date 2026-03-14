@@ -45,6 +45,21 @@ var standings_default = {
 // src/index.js
 var PLAYERS = ["Andrea", "Giovanni", "Luca", "Marco", "Michele", "Salvo"];
 var SCORE_COLUMNS = ["I", "J", "K", "L", "M", "N"];
+var MONTH_MAP = {
+  GEN: 0,
+  FEB: 1,
+  MAR: 2,
+  APR: 3,
+  MAG: 4,
+  GIU: 5,
+  LUG: 6,
+  AGO: 7,
+  SET: 8,
+  OTT: 9,
+  NOV: 10,
+  DIC: 11
+};
+var PREDICTION_OPENING_HOURS = 48;
 var RACES = [
   { id: 1, name: "AUSTRALIA", date: "07 MAR", time: "06:00", isSprint: false },
   { id: 2, name: "CINA SPRINT", date: "13 MAR", time: "08:30", isSprint: true },
@@ -95,6 +110,39 @@ function getRaceRows(raceId) {
   };
 }
 __name(getRaceRows, "getRaceRows");
+function getRaceById(raceId) {
+  return RACES.find((race) => race.id === raceId) || null;
+}
+__name(getRaceById, "getRaceById");
+function toRaceDate(race) {
+  const [day, month] = race.date.split(" ");
+  const monthIndex = MONTH_MAP[month];
+  if (monthIndex === void 0) {
+    return null;
+  }
+  const [hours, minutes] = race.time.split(":").map(Number);
+  return new Date(2026, monthIndex, Number(day), hours, minutes);
+}
+__name(toRaceDate, "toRaceDate");
+function assertPredictionWindowOpen(raceId) {
+  const race = getRaceById(raceId);
+  if (!race) {
+    throw new Error("Gara non supportata");
+  }
+  const deadline = toRaceDate(race);
+  if (!deadline) {
+    throw new Error("Deadline gara non configurata");
+  }
+  const opensAt = new Date(deadline.getTime() - PREDICTION_OPENING_HOURS * 60 * 60 * 1e3);
+  const now = /* @__PURE__ */ new Date();
+  if (now < opensAt) {
+    throw new Error("Pronostici non ancora aperti per questa gara");
+  }
+  if (now >= deadline) {
+    throw new Error("Pronostici chiusi per questa gara");
+  }
+}
+__name(assertPredictionWindowOpen, "assertPredictionWindowOpen");
 async function getAccessToken(googleServiceAccountJson) {
   if (!googleServiceAccountJson) {
     throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON non configurato");
@@ -337,6 +385,7 @@ var src_default = {
         if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
           throw new Error("Gara non supportata");
         }
+        assertPredictionWindowOpen(raceIdNumber);
         const rows = getRaceRows(raceIdNumber);
         const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
         const col = PLAYER_COLUMNS[user];
