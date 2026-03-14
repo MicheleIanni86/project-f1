@@ -1,6 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#0b0b0f"/>
-  <path d="M14 18h26c8 0 14 4 14 11 0 8-6 12-15 12H26v13H14V18z" fill="#e10600"/>
-  <path d="M26 28h13c2 0 4-1 4-3s-2-3-4-3H26v6z" fill="#fff"/>
-  <path d="M16 49h32" stroke="#ff7a00" stroke-width="4" stroke-linecap="round"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07070a" />
+      <stop offset="1" stop-color="#18181f" />
+    </linearGradient>
+    <linearGradient id="helmet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f40d0d" />
+      <stop offset="1" stop-color="#8a0303" />
+    </linearGradient>
+    <linearGradient id="visor" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8ef2ff" />
+      <stop offset="1" stop-color="#2677ff" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)" />
+  <path d="M10 48c0-14 10-28 28-28 10 0 16 6 16 16 0 8-4 12-11 12H29c-2 0-4 1-5 3l-1 3H10v-6Z" fill="url(#helmet)" />
+  <path d="M32 24c-7 0-13 5-16 12h24c4 0 7-2 7-5 0-4-4-7-10-7H32Z" fill="url(#visor)" />
+  <path d="M18 41h28" stroke="#ffffff" stroke-opacity=".18" stroke-width="2.5" stroke-linecap="round" />
+  <path d="M23 18c3-3 8-5 14-5 7 0 12 2 15 6" stroke="#ffb703" stroke-width="3" stroke-linecap="round" />
+  <circle cx="49" cy="24" r="2.5" fill="#ffb703" />
 </svg>

@@ -693,8 +693,8 @@ export default function App() {
     <div className="pb-24 max-w-md mx-auto relative min-h-screen">
       <header className="sticky top-0 z-50 glass-panel border-b border-white/5 px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded bg-gradient-to-br from-f1-red to-orange-600 flex items-center justify-center shadow-lg shadow-f1-red/20">
-            <Trophy className="w-5 h-5 text-white" />
+          <div className="w-9 h-9 rounded-xl overflow-hidden border border-white/10 bg-black/30 shadow-lg shadow-black/30 shrink-0">
+            <img src="/fanta-f1-logo.png" alt="Fanta F1 logo" className="w-full h-full object-cover" />
           </div>
           <div>
             <h1 className="font-bold text-xl tracking-tight leading-none uppercase italic">Fanta F1</h1>
@@ -725,8 +725,8 @@ export default function App() {
             <div className="w-full rounded-[2rem] overflow-hidden border border-white/10 bg-gradient-to-br from-zinc-950 via-black to-zinc-900 shadow-2xl shadow-black/50">
               <div className="px-6 pt-8 pb-5 border-b border-white/5 bg-[radial-gradient(circle_at_top_left,_rgba(220,38,38,0.25),_transparent_45%),linear-gradient(180deg,rgba(255,255,255,0.04),transparent)]">
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-f1-red to-orange-500 flex items-center justify-center shadow-lg shadow-f1-red/25">
-                    <Trophy className="w-6 h-6 text-white" />
+                  <div className="w-14 h-14 rounded-2xl overflow-hidden border border-white/10 bg-black/30 shadow-xl shadow-black/30 shrink-0">
+                    <img src="/fanta-f1-logo.png" alt="Fanta F1 logo" className="w-full h-full object-cover" />
                   </div>
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.35em] text-zinc-500">Accesso Paddock</p>
