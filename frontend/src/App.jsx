@@ -1018,23 +1018,25 @@ export default function App() {
 
           {isMenuOpen && (
             <div className="absolute right-0 top-12 min-w-[220px] rounded-2xl border border-white/10 bg-zinc-950/95 backdrop-blur-xl shadow-2xl shadow-black/50 overflow-hidden">
-              <a
-                href={SHARED_SHEET_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-3 px-4 py-3 text-sm text-zinc-200 hover:bg-white/5 transition-colors"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
-                Apri file condiviso
-              </a>
               {currentUser && (
-                <button
-                  onClick={handleLogout}
-                  className="w-full flex items-center gap-3 px-4 py-3 text-sm text-zinc-200 hover:bg-white/5 transition-colors border-t border-white/5"
-                >
-                  <LogOut className="w-4 h-4 text-zinc-400" />
-                  Logout
-                </button>
+                <>
+                  <a
+                    href={SHARED_SHEET_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-3 px-4 py-3 text-sm text-zinc-200 hover:bg-white/5 transition-colors"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-400" />
+                    Apri file condiviso
+                  </a>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-sm text-zinc-200 hover:bg-white/5 transition-colors border-t border-white/5"
+                  >
+                    <LogOut className="w-4 h-4 text-zinc-400" />
+                    Logout
+                  </button>
+                </>
               )}
             </div>
           )}
