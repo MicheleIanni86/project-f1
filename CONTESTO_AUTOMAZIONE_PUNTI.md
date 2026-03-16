@@ -1,4 +1,4 @@
-# Contesto Automazione Punti
+# Contesto Automazione Puntit
 
 ## Stato attuale
 

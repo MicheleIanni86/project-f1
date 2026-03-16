@@ -636,7 +636,7 @@ async function getOfficialRaceResult(race) {
         podium,
     };
 }
-
+ 
 function parseRaceSheetValues(race, values = []) {
     const rows = [0, 1, 2, 3].map((index) => values[index] || []);
     const predictions = PLAYERS.reduce((acc, player) => {
