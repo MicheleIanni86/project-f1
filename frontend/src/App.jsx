@@ -11,8 +11,8 @@ const DEFAULT_RACES = [
   { id: 2, name: 'CINA SPRINT', date: '13 MAR', time: '08:30', isSprint: true },
   { id: 3, name: 'CINA', date: '14 MAR', time: '08:00', isSprint: false },
   { id: 4, name: 'GIAPPONE', date: '28 MAR', time: '07:00', isSprint: false },
-  { id: 5, name: 'BAHRAIN', date: '11 APR', time: '18:00', isSprint: false },
-  { id: 6, name: 'ARABIA SAUDITA', date: '18 APR', time: '19:00', isSprint: false },
+  { id: 5, name: 'BAHRAIN', date: '11 APR', time: '18:00', isSprint: false, isCancelled: true },
+  { id: 6, name: 'ARABIA SAUDITA', date: '18 APR', time: '19:00', isSprint: false, isCancelled: true },
   { id: 7, name: 'MIAMI SPRINT', date: '01 MAG', time: '22:30', isSprint: true },
   { id: 8, name: 'MIAMI', date: '02 MAG', time: '22:00', isSprint: false },
   { id: 9, name: 'CANADA SPRINT', date: '22 MAG', time: '22:30', isSprint: true },
@@ -101,6 +101,13 @@ function toRaceDate(race) {
   return new Date(2026, monthIndex, Number(day), hours, minutes);
 }
 
+function addDays(date, amount) {
+  if (!date) return null;
+  const next = new Date(date);
+  next.setDate(next.getDate() + amount);
+  return next;
+}
+
 function endOfRaceDay(date) {
   if (!date) return null;
   const next = new Date(date);
@@ -109,6 +116,18 @@ function endOfRaceDay(date) {
 }
 
 function normalizeRace(race) {
+  if (race?.isCancelled) {
+    return {
+      ...race,
+      deadline: null,
+      weekendStartsAt: null,
+      raceDayEndsAt: null,
+      done: true,
+      isOpen: false,
+      isOngoing: false
+    };
+  }
+
   const deadline = toRaceDate(race);
   const weekendStartsAt = deadline ? new Date(deadline.getTime() - RACE_WEEKEND_HOURS * 60 * 60 * 1000) : null;
   const raceDayEndsAt = endOfRaceDay(deadline);
@@ -180,6 +199,29 @@ function formatSessionDateTime(value) {
   return `${day} • ${time}`;
 }
 
+function formatDateTimeForRaceCard(date, { includeTime = true } = {}) {
+  if (!date || Number.isNaN(date.valueOf())) return null;
+
+  const day = new Intl.DateTimeFormat('it-IT', {
+    weekday: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Europe/Rome'
+  }).format(date);
+
+  if (!includeTime) {
+    return day;
+  }
+
+  const time = new Intl.DateTimeFormat('it-IT', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Rome'
+  }).format(date);
+
+  return `${day} • ${time}`;
+}
+
 function formatWeekendDayBadge(qualifyingDate, raceDate, fallbackDate) {
   const toDay = (value) => {
     if (!value) return null;
@@ -200,6 +242,27 @@ function formatWeekendDayBadge(qualifyingDate, raceDate, fallbackDate) {
 
   if (raceDay) return raceDay;
   return fallbackDate.split(' ')[0];
+}
+
+function getRaceCardSchedule(race, raceSchedule) {
+  const fallbackQualifyingDate = toRaceDate(race);
+  const fallbackRaceDate = addDays(fallbackQualifyingDate, 1);
+
+  const qualifyingDate = raceSchedule?.qualifying?.dateStart
+    ? new Date(raceSchedule.qualifying.dateStart)
+    : fallbackQualifyingDate;
+  const raceDate = raceSchedule?.raceSession?.dateStart
+    ? new Date(raceSchedule.raceSession.dateStart)
+    : fallbackRaceDate;
+
+  return {
+    qualifyingLabel: formatDateTimeForRaceCard(qualifyingDate),
+    raceLabel: formatDateTimeForRaceCard(
+      raceDate,
+      raceSchedule?.raceSession?.dateStart ? { includeTime: true } : { includeTime: false }
+    ),
+    weekendDayBadge: formatWeekendDayBadge(qualifyingDate, raceDate, race.date)
+  };
 }
 
 function playerInitial(name) {
@@ -701,9 +764,10 @@ export default function App() {
   const races = standings?.races?.length >= DEFAULT_RACES.length ? standings.races : DEFAULT_RACES;
   const racesWithStatus = races.map(normalizeRace);
   const defaultRaceFilter = getDefaultRaceFilter(racesWithStatus);
-  const activeRaceIdsKey = racesWithStatus.filter((race) => !race.done).map((race) => race.id).join(',');
-  const nextUpcomingRace = racesWithStatus.find((race) => !race.done && !race.isOngoing) || null;
+  const activeRaceIdsKey = racesWithStatus.filter((race) => !race.done && !race.isCancelled).map((race) => race.id).join(',');
+  const nextUpcomingRace = racesWithStatus.find((race) => !race.done && !race.isOngoing && !race.isCancelled) || null;
   const filteredRaces = racesWithStatus.filter((race) => {
+    if (race.isCancelled) return false;
     if (raceFilter === 'past') return race.done;
     if (raceFilter === 'ongoing') return race.isOngoing;
     return !race.done && !race.isOngoing;
@@ -804,7 +868,7 @@ export default function App() {
   }, [defaultRaceFilter, selectedRace]);
 
   useEffect(() => {
-    const racesToLoad = racesWithStatus.filter((race) => !race.done);
+    const racesToLoad = racesWithStatus.filter((race) => !race.done && !race.isCancelled);
     if (!racesToLoad.length) return;
 
     let cancelled = false;
@@ -1152,13 +1216,7 @@ export default function App() {
                   {filteredRaces.map((race) => {
                     const isNextAvailableRace = nextUpcomingRace?.id === race.id;
                     const raceSchedule = raceScheduleMap[race.id];
-                    const qualifyingLabel = formatSessionDateTime(raceSchedule?.qualifying?.dateStart);
-                    const raceSessionLabel = formatSessionDateTime(raceSchedule?.raceSession?.dateStart);
-                    const weekendDayBadge = formatWeekendDayBadge(
-                      raceSchedule?.qualifying?.dateStart,
-                      raceSchedule?.raceSession?.dateStart,
-                      race.date
-                    );
+                    const { qualifyingLabel, raceLabel, weekendDayBadge } = getRaceCardSchedule(race, raceSchedule);
                     return (
                       <div key={race.id} className="glass-panel rounded-xl overflow-hidden border border-white/5 group relative">
                         <div className="p-4 flex gap-4">
@@ -1174,7 +1232,7 @@ export default function App() {
                                   <Flame className="w-3 h-3" /> SPRINT
                                 </span>
                               )}
-                              <h4 className="font-bold text-lg leading-tight uppercase tracking-wide">{race.name.replace(' SPRINT', '')}</h4>
+                              <h4 className="font-bold text-lg leading-tight uppercase tracking-wide">{race.name}</h4>
                             </div>
                             <div className="flex items-center gap-3 text-xs text-zinc-400 font-medium">
                               <div className="flex flex-col gap-1">
@@ -1184,7 +1242,7 @@ export default function App() {
                                   </span>
                                 )}
                                 <span className="flex items-center gap-1">
-                                  <Calendar className="w-3.5 h-3.5" /> Gara {raceSessionLabel || `${race.date} • ${race.time}`}
+                                  <Calendar className="w-3.5 h-3.5" /> Gara {raceLabel || race.date}
                                 </span>
                               </div>
                             </div>

@@ -23,8 +23,8 @@ const RACES = [
     { id: 2, name: "CINA SPRINT", date: "13 MAR", time: "08:30", isSprint: true },
     { id: 3, name: "CINA", date: "14 MAR", time: "08:00", isSprint: false },
     { id: 4, name: "GIAPPONE", date: "28 MAR", time: "07:00", isSprint: false },
-    { id: 5, name: "BAHRAIN", date: "11 APR", time: "18:00", isSprint: false },
-    { id: 6, name: "ARABIA SAUDITA", date: "18 APR", time: "19:00", isSprint: false },
+    { id: 5, name: "BAHRAIN", date: "11 APR", time: "18:00", isSprint: false, isCancelled: true },
+    { id: 6, name: "ARABIA SAUDITA", date: "18 APR", time: "19:00", isSprint: false, isCancelled: true },
     { id: 7, name: "MIAMI SPRINT", date: "01 MAG", time: "22:30", isSprint: true },
     { id: 8, name: "MIAMI", date: "02 MAG", time: "22:00", isSprint: false },
     { id: 9, name: "CANADA SPRINT", date: "22 MAG", time: "22:30", isSprint: true },
@@ -59,6 +59,37 @@ const PLAYER_COLUMNS = {
     Michele: "G",
     Salvo: "H",
 };
+const PLAYER_SCORE_COLUMNS = {
+    Andrea: "I",
+    Giovanni: "J",
+    Luca: "K",
+    Marco: "L",
+    Michele: "M",
+    Salvo: "N",
+};
+const DRIVER_ALIASES = {
+    RUS: "Russell",
+    RUSSELL: "Russell",
+    RUSSEL: "Russell",
+    LEC: "Leclerc",
+    LECLERC: "Leclerc",
+    LECRERC: "Leclerc",
+    PIA: "Piastri",
+    PIASTRI: "Piastri",
+    VER: "Verstappen",
+    VERSTAPPEN: "Verstappen",
+    HAM: "Hamilton",
+    HAMILTON: "Hamilton",
+    ANT: "Antonelli",
+    ANTONELLI: "Antonelli",
+    NOR: "Norris",
+    NORRIS: "Norris",
+};
+const OPENF1_COUNTRY_BY_RACE_ID = {
+    1: "Australia",
+    2: "China",
+    3: "China",
+};
 
 function getRaceRows(raceId) {
     const base = 3 + (raceId - 1) * 4;
@@ -72,6 +103,23 @@ function getRaceRows(raceId) {
 
 function getRaceById(raceId) {
     return RACES.find((race) => race.id === raceId) || null;
+}
+
+function isRaceCancelled(race) {
+    return Boolean(race?.isCancelled);
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeDriverName(value) {
+    const raw = (value || "").toString().trim().replace(/\s+/g, " ").toUpperCase();
+    if (!raw) {
+        return "";
+    }
+
+    return DRIVER_ALIASES[raw] || `${raw[0]}${raw.slice(1).toLowerCase()}`;
 }
 
 function toRaceDate(race) {
@@ -119,10 +167,26 @@ async function fetchJson(url, { allowNoResults = false } = {}) {
     return response.json();
 }
 
+async function fetchOpenF1Json(url, options = {}) {
+    await sleep(450);
+    return fetchJson(url, options);
+}
+
 async function getPredictionLockInfo(raceId) {
     const race = getRaceById(raceId);
     if (!race) {
         throw new Error("Gara non supportata");
+    }
+    if (isRaceCancelled(race)) {
+        return {
+            raceId,
+            raceName: race.name,
+            sessionName: null,
+            lockAt: null,
+            source: "cancelled_race",
+            isLocked: true,
+            isCancelled: true,
+        };
     }
 
     const deadline = toRaceDate(race);
@@ -167,6 +231,15 @@ async function getRaceScheduleInfo(raceId) {
     const race = getRaceById(raceId);
     if (!race) {
         throw new Error("Gara non supportata");
+    }
+    if (isRaceCancelled(race)) {
+        return {
+            raceId,
+            raceName: race.name,
+            isCancelled: true,
+            qualifying: null,
+            raceSession: null,
+        };
     }
 
     if (RACE_SCHEDULE_CACHE.has(raceId)) {
@@ -239,6 +312,9 @@ async function getRaceScheduleInfo(raceId) {
 
 async function assertPredictionWindowOpen(raceId) {
     const race = getRaceById(raceId);
+    if (isRaceCancelled(race)) {
+        throw new Error("Pronostici disabilitati: gara annullata");
+    }
     const deadline = toRaceDate(race);
     const now = new Date();
 
@@ -439,14 +515,30 @@ async function readSheetRange({ sheetId, accessToken, range }) {
 }
 
 async function writeValue({ sheetId, accessToken, range, value }) {
+    return writeValues({
+        sheetId,
+        accessToken,
+        range,
+        values: [[value]],
+        valueInputOption: "RAW",
+    });
+}
+
+async function writeValues({
+    sheetId,
+    accessToken,
+    range,
+    values,
+    valueInputOption = "RAW",
+}) {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodeURIComponent(
         range,
-    )}?valueInputOption=RAW`;
+    )}?valueInputOption=${valueInputOption}`;
 
     const body = {
         range,
         majorDimension: "ROWS",
-        values: [[value]],
+        values,
     };
 
     const res = await fetch(url, {
@@ -462,6 +554,244 @@ async function writeValue({ sheetId, accessToken, range, value }) {
         const text = await res.text();
         throw new Error(`Errore scrittura Sheets: ${res.status} ${text}`);
     }
+}
+
+async function getOfficialRaceResult(race) {
+    const countryName = OPENF1_COUNTRY_BY_RACE_ID[race.id];
+    if (!countryName) {
+        throw new Error(`Country OpenF1 non configurato per ${race.name}`);
+    }
+
+    const qualifyingSessionName = getExpectedSessionName(race);
+    const raceSessionName = getRaceSessionName(race);
+    const qualifyingSessions = await fetchOpenF1Json(
+        `https://api.openf1.org/v1/sessions?year=2026&country_name=${encodeURIComponent(
+            countryName,
+        )}&session_name=${encodeURIComponent(qualifyingSessionName)}`,
+    );
+    const raceSessions = await fetchOpenF1Json(
+        `https://api.openf1.org/v1/sessions?year=2026&country_name=${encodeURIComponent(
+            countryName,
+        )}&session_name=${encodeURIComponent(raceSessionName)}`,
+    );
+
+    const qualifyingSession = Array.isArray(qualifyingSessions) ? qualifyingSessions[0] : null;
+    const raceSession = Array.isArray(raceSessions) ? raceSessions[0] : null;
+    if (!qualifyingSession || !raceSession) {
+        throw new Error(`Sessioni OpenF1 mancanti per ${race.name}`);
+    }
+
+    const drivers = await fetchOpenF1Json(
+        `https://api.openf1.org/v1/drivers?session_key=${qualifyingSession.session_key}`,
+    );
+    const laps = await fetchOpenF1Json(
+        `https://api.openf1.org/v1/laps?session_key=${qualifyingSession.session_key}`,
+    );
+    const positions = await fetchOpenF1Json(
+        `https://api.openf1.org/v1/position?session_key=${raceSession.session_key}`,
+    );
+
+    const bestLapByDriver = new Map();
+    for (const lap of Array.isArray(laps) ? laps : []) {
+        if (lap?.lap_duration == null) {
+            continue;
+        }
+        const driverNumber = String(lap.driver_number);
+        const current = bestLapByDriver.get(driverNumber);
+        if (!current || Number(lap.lap_duration) < Number(current.lap_duration)) {
+            bestLapByDriver.set(driverNumber, lap);
+        }
+    }
+
+    const poleLap = [...bestLapByDriver.values()].sort(
+        (a, b) => Number(a.lap_duration) - Number(b.lap_duration),
+    )[0];
+
+    const latestPositionByDriver = new Map();
+    for (const entry of Array.isArray(positions) ? positions : []) {
+        const driverNumber = String(entry.driver_number);
+        const current = latestPositionByDriver.get(driverNumber);
+        const currentDate = current ? new Date(current.date) : null;
+        const entryDate = new Date(entry.date);
+        if (!currentDate || entryDate > currentDate) {
+            latestPositionByDriver.set(driverNumber, entry);
+        }
+    }
+
+    const driverByNumber = new Map();
+    for (const driver of Array.isArray(drivers) ? drivers : []) {
+        const key = String(driver.driver_number);
+        if (!driverByNumber.has(key)) {
+            driverByNumber.set(key, driver);
+        }
+    }
+
+    const podium = [...latestPositionByDriver.values()]
+        .sort((a, b) => Number(a.position) - Number(b.position))
+        .slice(0, 3)
+        .map((entry) => normalizeDriverName(driverByNumber.get(String(entry.driver_number))?.last_name || ""));
+
+    return {
+        pole: normalizeDriverName(driverByNumber.get(String(poleLap?.driver_number))?.last_name || ""),
+        podium,
+    };
+}
+
+function parseRaceSheetValues(race, values = []) {
+    const rows = [0, 1, 2, 3].map((index) => values[index] || []);
+    const predictions = PLAYERS.reduce((acc, player) => {
+        const predictionColumnIndex = PLAYER_COLUMNS[player].charCodeAt(0) - "A".charCodeAt(0);
+        const scoreColumnIndex = PLAYER_SCORE_COLUMNS[player].charCodeAt(0) - "A".charCodeAt(0);
+        acc[player] = {
+            pole: normalizeDriverName(rows[0][predictionColumnIndex] || ""),
+            podium: [
+                normalizeDriverName(rows[1][predictionColumnIndex] || ""),
+                normalizeDriverName(rows[2][predictionColumnIndex] || ""),
+                normalizeDriverName(rows[3][predictionColumnIndex] || ""),
+            ],
+            manualScore: Number(rows[0][scoreColumnIndex] || 0),
+        };
+        return acc;
+    }, {});
+
+    return {
+        raceId: race.id,
+        raceName: race.name,
+        predictions,
+    };
+}
+
+function computeRaceScore(prediction, official) {
+    let score = normalizeDriverName(prediction.pole) === official.pole ? 2 : 0;
+    for (let index = 0; index < 3; index++) {
+        const predictedDriver = normalizeDriverName(prediction.podium[index]);
+        if (!predictedDriver) {
+            continue;
+        }
+        if (predictedDriver === official.podium[index]) {
+            score += 3;
+        } else if (official.podium.includes(predictedDriver)) {
+            score += 1;
+        }
+    }
+    return score;
+}
+
+async function buildCompletedRacesComparison({ sheetId, accessToken, now = new Date() }) {
+    const comparisons = [];
+    for (const race of RACES) {
+        if (isRaceCancelled(race)) {
+            continue;
+        }
+        const rows = getRaceRows(race.id);
+        const range = `${SHEET_NAME}!A${rows.pole}:N${rows.third}`;
+        const raceValues = await readSheetRange({
+            sheetId,
+            accessToken,
+            range,
+        });
+        const parsed = parseRaceSheetValues(race, raceValues.values || []);
+        const hasAnyManualScore = PLAYERS.some(
+            (player) => (raceValues.values?.[0]?.[PLAYER_SCORE_COLUMNS[player].charCodeAt(0) - "A".charCodeAt(0)] || "") !== "",
+        );
+        if (!hasAnyManualScore) {
+            continue;
+        }
+        const official = await getOfficialRaceResult(race);
+        const perPlayer = PLAYERS.map((player) => {
+            const computed = computeRaceScore(parsed.predictions[player], official);
+            const manual = parsed.predictions[player].manualScore;
+            return {
+                player,
+                computed,
+                manual,
+                matches: computed === manual,
+            };
+        });
+
+        comparisons.push({
+            raceId: race.id,
+            raceName: race.name,
+            official,
+            perPlayer,
+        });
+    }
+
+    return comparisons;
+}
+
+function buildCompletedRacesTestAreaValues(comparisons) {
+    const values = [
+        [
+            "TEST API VS MANUALE",
+            "Data test",
+            new Date().toISOString().slice(0, 10),
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ],
+        [
+            "Gara",
+            "Pole API",
+            "P1 API",
+            "P2 API",
+            "P3 API",
+            "Andrea API",
+            "Andrea M",
+            "Giovanni API",
+            "Giovanni M",
+            "Luca API",
+            "Luca M",
+            "Marco API",
+            "Marco M",
+            "Michele API",
+            "Michele M",
+            "Salvo API",
+            "Salvo M",
+            "Esito",
+        ],
+    ];
+
+    for (const comparison of comparisons) {
+        const playerMap = Object.fromEntries(
+            comparison.perPlayer.map((entry) => [entry.player, entry]),
+        );
+        values.push([
+            comparison.raceName,
+            comparison.official.pole,
+            comparison.official.podium[0] || "",
+            comparison.official.podium[1] || "",
+            comparison.official.podium[2] || "",
+            playerMap.Andrea.computed,
+            playerMap.Andrea.manual,
+            playerMap.Giovanni.computed,
+            playerMap.Giovanni.manual,
+            playerMap.Luca.computed,
+            playerMap.Luca.manual,
+            playerMap.Marco.computed,
+            playerMap.Marco.manual,
+            playerMap.Michele.computed,
+            playerMap.Michele.manual,
+            playerMap.Salvo.computed,
+            playerMap.Salvo.manual,
+            comparison.perPlayer.every((entry) => entry.matches) ? "OK" : "DIFF",
+        ]);
+    }
+
+    values.push(["Regola", "Pole=2", "Esatta=3", "Sul podio=1", "", "", "", "", "", "", "", "", "", "", "", "", "", ""]);
+    return values;
 }
 
 function buildStandingsPayload(sourceStandings, races = [], midSeasonPredictions = []) {
@@ -656,6 +986,42 @@ export default {
                     corsHeaders,
                     400,
                 );
+            }
+        }
+
+        if (url.pathname === "/setup-test-area" && request.method === "POST") {
+            try {
+                const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
+                const comparisons = await buildCompletedRacesComparison({
+                    sheetId: SHEET_ID,
+                    accessToken,
+                });
+                const values = buildCompletedRacesTestAreaValues(comparisons);
+                const range = `${SHEET_NAME}!X11:AO${10 + values.length}`;
+                await writeValues({
+                    sheetId: SHEET_ID,
+                    accessToken,
+                    range,
+                    values,
+                    valueInputOption: "USER_ENTERED",
+                });
+
+                return jsonResponse(
+                    {
+                        success: true,
+                        message: "Confronto API vs manuale scritto nel Google Sheet",
+                        range,
+                        racesCompared: comparisons.map((comparison) => ({
+                            raceId: comparison.raceId,
+                            raceName: comparison.raceName,
+                            hasDiff: comparison.perPlayer.some((entry) => !entry.matches),
+                        })),
+                    },
+                    corsHeaders,
+                );
+            } catch (err) {
+                console.error(err);
+                return jsonResponse({ success: false, error: err.message }, corsHeaders, 400);
             }
         }
 
