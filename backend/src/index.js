@@ -4,6 +4,45 @@ const PLAYERS = ["Andrea", "Giovanni", "Luca", "Marco", "Michele", "Salvo"];
 const SCORE_COLUMNS = ["I", "J", "K", "L", "M", "N"];
 const SHEET_NAME = "Foglio1";
 const RACE_SCHEDULE_CACHE = new Map();
+const JOLPI_BASE_URL = "https://api.jolpi.ca/ergast/f1/2026";
+const JOLPI_ROUND_BY_RACE_ID = {
+    1: 1,
+    2: 2,
+    3: 2,
+    4: 3,
+    5: 4,
+    6: 5,
+    7: 6,
+    8: 6,
+    9: 7,
+    10: 7,
+    11: 8,
+    12: 9,
+    13: 10,
+    14: 11,
+    15: 11,
+    16: 12,
+    17: 13,
+    18: 14,
+    19: 14,
+    20: 15,
+    21: 16,
+    22: 17,
+    23: 18,
+    24: 18,
+    25: 19,
+    26: 20,
+    27: 21,
+    28: 22,
+    29: 23,
+    30: 24,
+};
+const JOLPI_CACHE = {
+    races: null,
+    qualifyingByRound: new Map(),
+    resultsByRound: new Map(),
+    sprintByRound: new Map(),
+};
 const MONTH_MAP = {
     GEN: 0,
     FEB: 1,
@@ -85,12 +124,6 @@ const DRIVER_ALIASES = {
     NOR: "Norris",
     NORRIS: "Norris",
 };
-const OPENF1_COUNTRY_BY_RACE_ID = {
-    1: "Australia",
-    2: "China",
-    3: "China",
-};
-
 function getRaceRows(raceId) {
     const base = 3 + (raceId - 1) * 4;
     return {
@@ -107,10 +140,6 @@ function getRaceById(raceId) {
 
 function isRaceCancelled(race) {
     return Boolean(race?.isCancelled);
-}
-
-function sleep(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function normalizeDriverName(value) {
@@ -167,9 +196,151 @@ async function fetchJson(url, { allowNoResults = false } = {}) {
     return response.json();
 }
 
-async function fetchOpenF1Json(url, options = {}) {
-    await sleep(450);
-    return fetchJson(url, options);
+async function fetchJolpiMrData(path) {
+    const data = await fetchJson(`${JOLPI_BASE_URL}${path}`);
+    return data?.MRData || {};
+}
+
+function getJolpiRound(race) {
+    const round = JOLPI_ROUND_BY_RACE_ID[race?.id];
+    if (!round) {
+        throw new Error(`Round Jolpi non configurato per ${race?.name || "gara sconosciuta"}`);
+    }
+    return round;
+}
+
+function toSessionDate(session) {
+    if (!session?.date) {
+        return null;
+    }
+
+    const time = session.time || "00:00:00Z";
+    const parsed = new Date(`${session.date}T${time}`);
+    return Number.isNaN(parsed.valueOf()) ? null : parsed;
+}
+
+function getSessionPayload(sessionName, session) {
+    const dateStart = toSessionDate(session);
+    if (!dateStart) {
+        return null;
+    }
+
+    return {
+        sessionName,
+        dateStart: dateStart.toISOString(),
+        dateEnd: null,
+        countryName: null,
+        location: null,
+    };
+}
+
+async function getJolpiSeasonRaces() {
+    if (!JOLPI_CACHE.races) {
+        JOLPI_CACHE.races = fetchJolpiMrData("/races/");
+    }
+    return JOLPI_CACHE.races;
+}
+
+async function getJolpiRoundRace(race) {
+    const round = getJolpiRound(race);
+    const data = await getJolpiSeasonRaces();
+    const races = data?.RaceTable?.Races || [];
+    const roundRace = races.find((item) => Number(item.round) === round) || null;
+
+    if (!roundRace) {
+        throw new Error(`Calendario Jolpi mancante per round ${round}`);
+    }
+
+    return roundRace;
+}
+
+async function getJolpiQualifyingRace(round) {
+    if (!JOLPI_CACHE.qualifyingByRound.has(round)) {
+        JOLPI_CACHE.qualifyingByRound.set(round, fetchJolpiMrData(`/${round}/qualifying/`));
+    }
+
+    const data = await JOLPI_CACHE.qualifyingByRound.get(round);
+    const race = data?.RaceTable?.Races?.[0] || null;
+    if (!race) {
+        throw new Error(`Qualifiche Jolpi mancanti per round ${round}`);
+    }
+    return race;
+}
+
+async function getJolpiResultsRace(round) {
+    if (!JOLPI_CACHE.resultsByRound.has(round)) {
+        JOLPI_CACHE.resultsByRound.set(round, fetchJolpiMrData(`/${round}/results/`));
+    }
+
+    const data = await JOLPI_CACHE.resultsByRound.get(round);
+    const race = data?.RaceTable?.Races?.[0] || null;
+    if (!race) {
+        throw new Error(`Risultati Jolpi mancanti per round ${round}`);
+    }
+    return race;
+}
+
+async function getJolpiSprintRace(round) {
+    if (!JOLPI_CACHE.sprintByRound.has(round)) {
+        JOLPI_CACHE.sprintByRound.set(round, fetchJolpiMrData(`/${round}/sprint/`));
+    }
+
+    const data = await JOLPI_CACHE.sprintByRound.get(round);
+    const race = data?.RaceTable?.Races?.[0] || null;
+    if (!race) {
+        throw new Error(`Sprint Jolpi mancante per round ${round}`);
+    }
+    return race;
+}
+
+function parseLapTimeToMs(value) {
+    if (!value || typeof value !== "string") {
+        return Number.POSITIVE_INFINITY;
+    }
+
+    const match = value.match(/^(?:(\d+):)?(\d+)\.(\d{3})$/);
+    if (!match) {
+        return Number.POSITIVE_INFINITY;
+    }
+
+    const [, minutesRaw, secondsRaw, millisRaw] = match;
+    const minutes = Number(minutesRaw || 0);
+    const seconds = Number(secondsRaw || 0);
+    const millis = Number(millisRaw || 0);
+    return minutes * 60_000 + seconds * 1_000 + millis;
+}
+
+function getPoleFromQualifyingResults(results = []) {
+    const ordered = [...results].sort((a, b) => {
+        const aBest = Math.min(
+            parseLapTimeToMs(a.Q3),
+            parseLapTimeToMs(a.Q2),
+            parseLapTimeToMs(a.Q1),
+        );
+        const bBest = Math.min(
+            parseLapTimeToMs(b.Q3),
+            parseLapTimeToMs(b.Q2),
+            parseLapTimeToMs(b.Q1),
+        );
+        return aBest - bBest;
+    });
+
+    return normalizeDriverName(ordered[0]?.Driver?.familyName || "");
+}
+
+function getPodiumFromResults(results = []) {
+    return [...results]
+        .sort((a, b) => Number(a.position || 999) - Number(b.position || 999))
+        .slice(0, 3)
+        .map((entry) => normalizeDriverName(entry?.Driver?.familyName || ""));
+}
+
+function getSprintPoleFromResults(results = []) {
+    const poleEntry =
+        results.find((entry) => Number(entry.grid) === 1) ||
+        [...results].sort((a, b) => Number(a.grid || 999) - Number(b.grid || 999))[0];
+
+    return normalizeDriverName(poleEntry?.Driver?.familyName || "");
 }
 
 async function getPredictionLockInfo(raceId) {
@@ -194,26 +365,10 @@ async function getPredictionLockInfo(raceId) {
         throw new Error("Deadline gara non configurata");
     }
 
+    const roundRace = await getJolpiRoundRace(race);
     const sessionName = getExpectedSessionName(race);
-    const startDate = formatDateOnly(addDays(deadline, -3));
-    const endDate = formatDateOnly(addDays(deadline, 1));
-    const url = `https://api.openf1.org/v1/sessions?year=2026&session_name=${encodeURIComponent(
-        sessionName,
-    )}&date_start>=${encodeURIComponent(startDate)}&date_start<=${encodeURIComponent(endDate)}`;
-    const sessions = await fetchJson(url, { allowNoResults: true });
-    const normalizedSessions = Array.isArray(sessions)
-        ? sessions
-              .map((session) => ({
-                  ...session,
-                  dateStart: session.date_start ? new Date(session.date_start) : null,
-              }))
-              .filter((session) => session.dateStart instanceof Date && !Number.isNaN(session.dateStart.valueOf()))
-        : [];
-
-    const eligibleSessions = normalizedSessions
-        .filter((session) => session.dateStart <= deadline)
-        .sort((a, b) => b.dateStart - a.dateStart);
-    const selectedSession = eligibleSessions[0] || normalizedSessions.sort((a, b) => b.dateStart - a.dateStart)[0] || null;
+    const session = race.isSprint ? roundRace.SprintQualifying : roundRace.Qualifying;
+    const selectedSession = session ? { dateStart: toSessionDate(session) } : null;
     const now = new Date();
     const lockAt = selectedSession?.dateStart || deadline;
 
@@ -222,7 +377,7 @@ async function getPredictionLockInfo(raceId) {
         raceName: race.name,
         sessionName,
         lockAt: lockAt.toISOString(),
-        source: selectedSession ? "openf1" : "race_deadline_fallback",
+        source: selectedSession ? "jolpi" : "race_deadline_fallback",
         isLocked: now >= lockAt,
     };
 }
@@ -251,59 +406,23 @@ async function getRaceScheduleInfo(raceId) {
         throw new Error("Deadline gara non configurata");
     }
 
-    const startDate = formatDateOnly(addDays(deadline, -3));
-    const endDate = formatDateOnly(addDays(deadline, 1));
+    const roundRace = await getJolpiRoundRace(race);
     const qualifyingSessionName = getExpectedSessionName(race);
     const raceSessionName = getRaceSessionName(race);
-
-    const [qualifyingSessions, raceSessions] = await Promise.all([
-        fetchJson(
-            `https://api.openf1.org/v1/sessions?year=2026&session_name=${encodeURIComponent(
-                qualifyingSessionName,
-            )}&date_start>=${encodeURIComponent(startDate)}&date_start<=${encodeURIComponent(endDate)}`,
-            { allowNoResults: true },
-        ),
-        fetchJson(
-            `https://api.openf1.org/v1/sessions?year=2026&session_name=${encodeURIComponent(
-                raceSessionName,
-            )}&date_start>=${encodeURIComponent(startDate)}&date_start<=${encodeURIComponent(endDate)}`,
-            { allowNoResults: true },
-        ),
-    ]);
-
-    const normalizeSessions = (sessions) =>
-        (Array.isArray(sessions) ? sessions : [])
-            .map((session) => ({
-                ...session,
-                dateStart: session.date_start ? new Date(session.date_start) : null,
-            }))
-            .filter((session) => session.dateStart instanceof Date && !Number.isNaN(session.dateStart.valueOf()))
-            .sort((a, b) => a.dateStart - b.dateStart);
-
-    const qualifying = normalizeSessions(qualifyingSessions)[0] || null;
-    const raceSession = normalizeSessions(raceSessions)[0] || null;
+    const qualifying = getSessionPayload(
+        qualifyingSessionName,
+        race.isSprint ? roundRace.SprintQualifying : roundRace.Qualifying,
+    );
+    const raceSession = getSessionPayload(
+        raceSessionName,
+        race.isSprint ? roundRace.Sprint : roundRace,
+    );
 
     const payload = {
         raceId,
         raceName: race.name,
-        qualifying: qualifying
-            ? {
-                  sessionName: qualifying.session_name,
-                  dateStart: qualifying.date_start,
-                  dateEnd: qualifying.date_end,
-                  countryName: qualifying.country_name,
-                  location: qualifying.location,
-              }
-            : null,
-        raceSession: raceSession
-            ? {
-                  sessionName: raceSession.session_name,
-                  dateStart: raceSession.date_start,
-                  dateEnd: raceSession.date_end,
-                  countryName: raceSession.country_name,
-                  location: raceSession.location,
-              }
-            : null,
+        qualifying,
+        raceSession,
     };
 
     RACE_SCHEDULE_CACHE.set(raceId, payload);
@@ -557,83 +676,26 @@ async function writeValues({
 }
 
 async function getOfficialRaceResult(race) {
-    const countryName = OPENF1_COUNTRY_BY_RACE_ID[race.id];
-    if (!countryName) {
-        throw new Error(`Country OpenF1 non configurato per ${race.name}`);
+    const round = getJolpiRound(race);
+
+    if (race.isSprint) {
+        const sprintRace = await getJolpiSprintRace(round);
+        const sprintResults = sprintRace.SprintResults || [];
+
+        return {
+            pole: getSprintPoleFromResults(sprintResults),
+            podium: getPodiumFromResults(sprintResults),
+        };
     }
 
-    const qualifyingSessionName = getExpectedSessionName(race);
-    const raceSessionName = getRaceSessionName(race);
-    const qualifyingSessions = await fetchOpenF1Json(
-        `https://api.openf1.org/v1/sessions?year=2026&country_name=${encodeURIComponent(
-            countryName,
-        )}&session_name=${encodeURIComponent(qualifyingSessionName)}`,
-    );
-    const raceSessions = await fetchOpenF1Json(
-        `https://api.openf1.org/v1/sessions?year=2026&country_name=${encodeURIComponent(
-            countryName,
-        )}&session_name=${encodeURIComponent(raceSessionName)}`,
-    );
-
-    const qualifyingSession = Array.isArray(qualifyingSessions) ? qualifyingSessions[0] : null;
-    const raceSession = Array.isArray(raceSessions) ? raceSessions[0] : null;
-    if (!qualifyingSession || !raceSession) {
-        throw new Error(`Sessioni OpenF1 mancanti per ${race.name}`);
-    }
-
-    const drivers = await fetchOpenF1Json(
-        `https://api.openf1.org/v1/drivers?session_key=${qualifyingSession.session_key}`,
-    );
-    const laps = await fetchOpenF1Json(
-        `https://api.openf1.org/v1/laps?session_key=${qualifyingSession.session_key}`,
-    );
-    const positions = await fetchOpenF1Json(
-        `https://api.openf1.org/v1/position?session_key=${raceSession.session_key}`,
-    );
-
-    const bestLapByDriver = new Map();
-    for (const lap of Array.isArray(laps) ? laps : []) {
-        if (lap?.lap_duration == null) {
-            continue;
-        }
-        const driverNumber = String(lap.driver_number);
-        const current = bestLapByDriver.get(driverNumber);
-        if (!current || Number(lap.lap_duration) < Number(current.lap_duration)) {
-            bestLapByDriver.set(driverNumber, lap);
-        }
-    }
-
-    const poleLap = [...bestLapByDriver.values()].sort(
-        (a, b) => Number(a.lap_duration) - Number(b.lap_duration),
-    )[0];
-
-    const latestPositionByDriver = new Map();
-    for (const entry of Array.isArray(positions) ? positions : []) {
-        const driverNumber = String(entry.driver_number);
-        const current = latestPositionByDriver.get(driverNumber);
-        const currentDate = current ? new Date(current.date) : null;
-        const entryDate = new Date(entry.date);
-        if (!currentDate || entryDate > currentDate) {
-            latestPositionByDriver.set(driverNumber, entry);
-        }
-    }
-
-    const driverByNumber = new Map();
-    for (const driver of Array.isArray(drivers) ? drivers : []) {
-        const key = String(driver.driver_number);
-        if (!driverByNumber.has(key)) {
-            driverByNumber.set(key, driver);
-        }
-    }
-
-    const podium = [...latestPositionByDriver.values()]
-        .sort((a, b) => Number(a.position) - Number(b.position))
-        .slice(0, 3)
-        .map((entry) => normalizeDriverName(driverByNumber.get(String(entry.driver_number))?.last_name || ""));
+    const [qualifyingRace, resultsRace] = await Promise.all([
+        getJolpiQualifyingRace(round),
+        getJolpiResultsRace(round),
+    ]);
 
     return {
-        pole: normalizeDriverName(driverByNumber.get(String(poleLap?.driver_number))?.last_name || ""),
-        podium,
+        pole: getPoleFromQualifyingResults(qualifyingRace.QualifyingResults || []),
+        podium: getPodiumFromResults(resultsRace.Results || []),
     };
 }
  
@@ -1050,7 +1112,7 @@ export default {
                             raceName: race?.name || "",
                             qualifying: null,
                             raceSession: null,
-                            warning: "Rate limit OpenF1, uso fallback vuoto temporaneo",
+                            warning: "Rate limit Jolpi, uso fallback vuoto temporaneo",
                         },
                         corsHeaders,
                     );
