@@ -64,8 +64,6 @@ const SHARED_SHEET_ID = '1wMlfyrE5eZKV18N6a5Dh-qH9ls0Nuhtdt-gBXHajPVs';
 const STORAGE_KEYS = {
   currentUser: 'f1nta-current-user'
 };
-const RACE_WEEKEND_HOURS = 48;
-
 function normalizePredictionSet(value) {
   return {
     pole: value?.pole || '',
@@ -115,31 +113,41 @@ function endOfRaceDay(date) {
   return next;
 }
 
-function normalizeRace(race) {
+function normalizeRace(race, raceSchedule) {
   if (race?.isCancelled) {
     return {
       ...race,
       deadline: null,
-      weekendStartsAt: null,
+      lockStartsAt: null,
+      raceStartsAt: null,
       raceDayEndsAt: null,
       done: true,
       isOpen: false,
+      isLocked: false,
       isOngoing: false
     };
   }
 
   const deadline = toRaceDate(race);
-  const weekendStartsAt = deadline ? new Date(deadline.getTime() - RACE_WEEKEND_HOURS * 60 * 60 * 1000) : null;
-  const raceDayEndsAt = endOfRaceDay(deadline);
+  const lockStartsAt = raceSchedule?.qualifying?.dateStart
+    ? new Date(raceSchedule.qualifying.dateStart)
+    : deadline;
+  const raceStartsAt = raceSchedule?.raceSession?.dateStart
+    ? new Date(raceSchedule.raceSession.dateStart)
+    : addDays(deadline, 1);
+  const raceDayEndsAt = endOfRaceDay(raceStartsAt);
   const now = new Date();
+
   return {
     ...race,
     deadline,
-    weekendStartsAt,
+    lockStartsAt,
+    raceStartsAt,
     raceDayEndsAt,
     done: raceDayEndsAt ? raceDayEndsAt < now : false,
-    isOpen: deadline ? now < deadline : false,
-    isOngoing: raceDayEndsAt && weekendStartsAt ? now >= weekendStartsAt && now <= raceDayEndsAt : false
+    isOpen: lockStartsAt ? now < lockStartsAt : false,
+    isLocked: Boolean(lockStartsAt && raceStartsAt && now >= lockStartsAt && now < raceStartsAt),
+    isOngoing: Boolean(raceStartsAt && raceDayEndsAt && now >= raceStartsAt && now <= raceDayEndsAt)
   };
 }
 
@@ -367,7 +375,7 @@ async function fetchPublicSheetTotals() {
 }
 
 function getDefaultRaceFilter(races) {
-  return races.some((race) => race.isOngoing) ? 'ongoing' : 'upcoming';
+  return races.some((race) => race.isLocked || race.isOngoing) ? 'ongoing' : 'upcoming';
 }
 
 function normalizeValue(value) {
@@ -743,7 +751,7 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [activeTab, setActiveTab] = useState('races');
-  const [raceFilter, setRaceFilter] = useState(() => getDefaultRaceFilter(DEFAULT_RACES.map(normalizeRace)));
+  const [raceFilter, setRaceFilter] = useState(() => getDefaultRaceFilter(DEFAULT_RACES.map((race) => normalizeRace(race))));
   const [selectedRace, setSelectedRace] = useState(null);
   const [predictions, setPredictions] = useState(EMPTY_PREDICTIONS);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -762,15 +770,16 @@ export default function App() {
   const historyStateKeyRef = useRef('');
 
   const races = standings?.races?.length >= DEFAULT_RACES.length ? standings.races : DEFAULT_RACES;
-  const racesWithStatus = races.map(normalizeRace);
+  const racesWithStatus = races.map((race) => normalizeRace(race, raceScheduleMap[race.id]));
   const defaultRaceFilter = getDefaultRaceFilter(racesWithStatus);
+  const hasOngoingRaces = racesWithStatus.some((race) => race.isLocked || race.isOngoing);
   const activeRaceIdsKey = racesWithStatus.filter((race) => !race.done && !race.isCancelled).map((race) => race.id).join(',');
-  const nextUpcomingRace = racesWithStatus.find((race) => !race.done && !race.isOngoing && !race.isCancelled) || null;
+  const nextUpcomingRace = racesWithStatus.find((race) => !race.done && !race.isLocked && !race.isOngoing && !race.isCancelled) || null;
   const filteredRaces = racesWithStatus.filter((race) => {
     if (race.isCancelled) return false;
     if (raceFilter === 'past') return race.done;
-    if (raceFilter === 'ongoing') return race.isOngoing;
-    return !race.done && !race.isOngoing;
+    if (raceFilter === 'ongoing') return race.isLocked || race.isOngoing;
+    return !race.done && !race.isLocked && !race.isOngoing;
   });
   const sortedStandings = [...(standings?.standings || [])].sort((a, b) => {
     const pointsDiff = Number(b.pointsTotal || 0) - Number(a.pointsTotal || 0);
@@ -787,6 +796,7 @@ export default function App() {
     && nextUpcomingRace
     && selectedRace.id === nextUpcomingRace.id
     && !selectedRace.done
+    && !selectedRace.isLocked
     && !selectedRace.isOngoing
     && !raceLockInfo?.isLocked
   );
@@ -866,6 +876,12 @@ export default function App() {
       setRaceFilter(defaultRaceFilter);
     }
   }, [defaultRaceFilter, selectedRace]);
+
+  useEffect(() => {
+    if (raceFilter === 'ongoing' && !hasOngoingRaces) {
+      setRaceFilter('upcoming');
+    }
+  }, [hasOngoingRaces, raceFilter]);
 
   useEffect(() => {
     const racesToLoad = racesWithStatus.filter((race) => !race.done && !race.isCancelled);
@@ -1192,12 +1208,14 @@ export default function App() {
                 </div>
 
                 <div className="flex gap-2 p-1 glass-panel rounded-lg">
-                  <button
-                    onClick={() => setRaceFilter('ongoing')}
-                    className={clsx('flex-1 py-2 text-xs font-bold rounded-md transition-all', raceFilter === 'ongoing' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white')}
-                  >
-                    IN CORSO
-                  </button>
+                  {hasOngoingRaces && (
+                    <button
+                      onClick={() => setRaceFilter('ongoing')}
+                      className={clsx('flex-1 py-2 text-xs font-bold rounded-md transition-all', raceFilter === 'ongoing' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white')}
+                    >
+                      IN CORSO
+                    </button>
+                  )}
                   <button
                     onClick={() => setRaceFilter('upcoming')}
                     className={clsx('flex-1 py-2 text-xs font-bold rounded-md transition-all', raceFilter === 'upcoming' ? 'bg-white text-black' : 'text-zinc-400 hover:text-white')}
@@ -1258,11 +1276,16 @@ export default function App() {
                           </div>
                         </div>
 
-                        <div className={clsx('px-4 py-2 text-xs font-semibold flex items-center gap-1 border-t', race.isOngoing ? 'bg-red-950/30 text-red-500 border-f1-red/10' : race.done ? 'bg-white/5 text-zinc-400 border-white/5' : isNextAvailableRace ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/10' : 'bg-white/5 text-zinc-500 border-white/5')}>
+                        <div className={clsx('px-4 py-2 text-xs font-semibold flex items-center gap-1 border-t', race.isOngoing ? 'bg-red-950/30 text-red-500 border-f1-red/10' : race.isLocked ? 'bg-amber-950/30 text-amber-400 border-amber-500/10' : race.done ? 'bg-white/5 text-zinc-400 border-white/5' : isNextAvailableRace ? 'bg-emerald-950/30 text-emerald-400 border-emerald-500/10' : 'bg-white/5 text-zinc-500 border-white/5')}>
                           {race.isOngoing ? (
                             <>
                               <span className="w-1.5 h-1.5 rounded-full bg-f1-red animate-pulse"></span>
                               GARA IN CORSO
+                            </>
+                          ) : race.isLocked ? (
+                            <>
+                              <Lock className="w-3.5 h-3.5 opacity-70" />
+                              PRONOSTICI BLOCCATI
                             </>
                           ) : race.done ? (
                             <>
