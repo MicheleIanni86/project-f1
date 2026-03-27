@@ -775,6 +775,8 @@ export default function App() {
   const [savedPredictions, setSavedPredictions] = useState(EMPTY_PREDICTIONS);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [predictionSubmitStatus, setPredictionSubmitStatus] = useState(null);
+  const [isApplyingScores, setIsApplyingScores] = useState(false);
+  const [applyScoresStatus, setApplyScoresStatus] = useState(null);
   const historyStateKeyRef = useRef('');
 
   const races = standings?.races?.length >= DEFAULT_RACES.length ? standings.races : DEFAULT_RACES;
@@ -799,6 +801,7 @@ export default function App() {
   const hasSavedPrediction = !predictionsAreEqual(savedPredictions, EMPTY_PREDICTIONS);
   const hasPredictionChanges = !predictionsAreEqual(predictions, savedPredictions);
   const hasInvalidPodiumPredictions = hasDuplicatePodiumPredictions(predictions);
+  const isScoreAdmin = currentUser === 'Michele';
   const canEditSelectedRace = Boolean(
     selectedRace
     && nextUpcomingRace
@@ -851,6 +854,7 @@ export default function App() {
           setIsPredictionsOpen(false);
           setRaceLockInfo(null);
           setPredictionSubmitStatus(null);
+          setApplyScoresStatus(null);
         } else if (activeTab !== 'races') {
           setActiveTab('races');
         }
@@ -867,6 +871,7 @@ export default function App() {
           setOpenSection(null);
           setIsPredictionsOpen(false);
           setPredictionSubmitStatus(null);
+          setApplyScoresStatus(null);
           await loadRacePredictions(targetRace);
         }
       } else {
@@ -875,6 +880,7 @@ export default function App() {
         setIsPredictionsOpen(false);
         setRaceLockInfo(null);
         setPredictionSubmitStatus(null);
+        setApplyScoresStatus(null);
       }
     };
 
@@ -954,6 +960,7 @@ export default function App() {
     setPredictions(EMPTY_PREDICTIONS);
     setSavedPredictions(EMPTY_PREDICTIONS);
     setPredictionSubmitStatus(null);
+    setApplyScoresStatus(null);
     setLoginPassword('');
     setLoginName('');
     setLoginError('');
@@ -1021,6 +1028,7 @@ export default function App() {
     setIsPredictionsOpen(false);
     setIsMenuOpen(false);
     setPredictionSubmitStatus(null);
+    setApplyScoresStatus(null);
     await loadRacePredictions(race);
   };
 
@@ -1032,6 +1040,7 @@ export default function App() {
     setRaceLockInfo(null);
     setSavedPredictions(EMPTY_PREDICTIONS);
     setPredictionSubmitStatus(null);
+    setApplyScoresStatus(null);
     setActiveTab(tab);
   };
 
@@ -1049,6 +1058,36 @@ export default function App() {
 
     setPredictionSubmitStatus(null);
     setPredictions((prev) => ({ ...prev, [position]: driverId }));
+  };
+
+  const applySelectedRaceScores = async () => {
+    if (!selectedRace || !isScoreAdmin) return;
+
+    try {
+      setIsApplyingScores(true);
+      setApplyScoresStatus(null);
+      const data = await apiFetchJson('/apply-race-scores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raceId: selectedRace.id })
+      });
+
+      if (!data.success) {
+        throw new Error(data.error || 'Errore nel calcolo dei punteggi.');
+      }
+
+      setApplyScoresStatus({
+        type: 'success',
+        message: `Punteggi scritti per ${data.raceName} in ${data.range}.`
+      });
+    } catch (error) {
+      setApplyScoresStatus({
+        type: 'error',
+        message: error.message || 'Errore nel calcolo dei punteggi.'
+      });
+    } finally {
+      setIsApplyingScores(false);
+    }
   };
 
   const submitPredictions = async () => {
@@ -1522,6 +1561,45 @@ export default function App() {
                     )}
 
                     <div className="space-y-3">
+                      {isScoreAdmin && selectedRace && (
+                        <div className="rounded-2xl overflow-hidden border border-amber-500/20 bg-amber-500/10">
+                          <div className="px-4 py-4 flex items-center justify-between gap-3">
+                            <div>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-amber-200">
+                                Admin Michele
+                              </p>
+                              <p className="text-xs text-amber-100/70">
+                                Forza il calcolo punti della gara selezionata.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={applySelectedRaceScores}
+                              disabled={isApplyingScores}
+                              className={clsx(
+                                'shrink-0 rounded-xl px-4 py-2 text-xs font-black uppercase tracking-wider transition-colors',
+                                isApplyingScores
+                                  ? 'bg-white/5 text-zinc-500 cursor-not-allowed'
+                                  : 'bg-amber-400 text-black hover:bg-amber-300'
+                              )}
+                            >
+                              {isApplyingScores ? 'Calcolo...' : 'Forza Punti'}
+                            </button>
+                          </div>
+                          {applyScoresStatus && (
+                            <div className="px-4 pb-4">
+                              <p
+                                className={clsx(
+                                  'text-sm',
+                                  applyScoresStatus.type === 'success' ? 'text-emerald-200' : 'text-red-200'
+                                )}
+                              >
+                                {applyScoresStatus.message}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div className="rounded-2xl overflow-hidden border border-cyan-500/20 bg-cyan-500/10">
                         <button
                           type="button"

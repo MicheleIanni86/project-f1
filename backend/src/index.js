@@ -782,6 +782,131 @@ async function buildCompletedRacesComparison({ sheetId, accessToken, now = new D
     return comparisons;
 }
 
+async function buildRaceScoresPayload({ sheetId, accessToken, raceId }) {
+    const race = getRaceById(raceId);
+    if (!race) {
+        throw new Error("Gara non supportata");
+    }
+    if (isRaceCancelled(race)) {
+        throw new Error("Impossibile calcolare i punti per una gara annullata");
+    }
+
+    const rows = getRaceRows(race.id);
+    const readRangeA1 = `${SHEET_NAME}!A${rows.pole}:N${rows.third}`;
+    const raceValues = await readSheetRange({
+        sheetId,
+        accessToken,
+        range: readRangeA1,
+    });
+    const parsed = parseRaceSheetValues(race, raceValues.values || []);
+    const official = await getOfficialRaceResult(race);
+    const scoreValues = PLAYERS.map((player) =>
+        computeRaceScore(parsed.predictions[player], official),
+    );
+    const writeRangeA1 = getScoreRange(race.id);
+
+    return {
+        race,
+        official,
+        readRangeA1,
+        writeRangeA1,
+        scoreValues,
+        perPlayer: PLAYERS.map((player, index) => ({
+            player,
+            score: scoreValues[index],
+        })),
+    };
+}
+
+async function applyRaceScores({ sheetId, accessToken, raceId }) {
+    if (!accessToken) {
+        throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON non configurato");
+    }
+
+    const payload = await buildRaceScoresPayload({ sheetId, accessToken, raceId });
+
+    await writeValues({
+        sheetId,
+        accessToken,
+        range: payload.writeRangeA1,
+        values: [payload.scoreValues],
+        valueInputOption: "RAW",
+    });
+
+    return payload;
+}
+
+function getRaceAutoScoreAvailableAt(race) {
+    const raceDate = toRaceDate(race);
+    if (!raceDate) {
+        return null;
+    }
+
+    // Wait until the day after the race weekend before auto-writing scores.
+    return addDays(raceDate, 1);
+}
+
+async function hasStoredScores({ sheetId, accessToken, raceId }) {
+    const scoreRange = getScoreRange(raceId);
+    const scoreRes = await readSheetRange({
+        sheetId,
+        accessToken,
+        range: scoreRange,
+    });
+    const values = scoreRes.values?.[0] || [];
+    return values.some((value) => `${value}`.trim() !== "");
+}
+
+async function applyPendingRaceScores({ sheetId, accessToken, now = new Date() }) {
+    const applied = [];
+    const skipped = [];
+
+    for (const race of RACES) {
+        if (isRaceCancelled(race)) {
+            skipped.push({ raceId: race.id, raceName: race.name, reason: "cancelled" });
+            continue;
+        }
+
+        const availableAt = getRaceAutoScoreAvailableAt(race);
+        if (!availableAt || now < availableAt) {
+            skipped.push({ raceId: race.id, raceName: race.name, reason: "not_ready_yet" });
+            continue;
+        }
+
+        const alreadyStored = await hasStoredScores({
+            sheetId,
+            accessToken,
+            raceId: race.id,
+        });
+        if (alreadyStored) {
+            skipped.push({ raceId: race.id, raceName: race.name, reason: "scores_already_present" });
+            continue;
+        }
+
+        try {
+            const result = await applyRaceScores({
+                sheetId,
+                accessToken,
+                raceId: race.id,
+            });
+            applied.push({
+                raceId: race.id,
+                raceName: race.name,
+                range: result.writeRangeA1,
+                scores: result.perPlayer,
+            });
+        } catch (error) {
+            skipped.push({
+                raceId: race.id,
+                raceName: race.name,
+                reason: error.message.includes("mancanti") ? "official_results_not_available" : error.message,
+            });
+        }
+    }
+
+    return { applied, skipped };
+}
+
 function buildCompletedRacesTestAreaValues(comparisons) {
     const values = [
         [
@@ -1087,6 +1212,63 @@ export default {
             }
         }
 
+        if (url.pathname === "/apply-race-scores" && request.method === "POST") {
+            try {
+                const body = await request.json().catch(() => ({}));
+                const raceIdNumber = Number(body?.raceId ?? url.searchParams.get("raceId"));
+
+                if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
+                    throw new Error("Parametro raceId non valido");
+                }
+
+                const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
+                const result = await applyRaceScores({
+                    sheetId: SHEET_ID,
+                    accessToken,
+                    raceId: raceIdNumber,
+                });
+
+                return jsonResponse(
+                    {
+                        success: true,
+                        message: "Punteggi gara scritti nel Google Sheet",
+                        raceId: result.race.id,
+                        raceName: result.race.name,
+                        range: result.writeRangeA1,
+                        official: result.official,
+                        scores: result.perPlayer,
+                    },
+                    corsHeaders,
+                );
+            } catch (err) {
+                console.error(err);
+                return jsonResponse({ success: false, error: err.message }, corsHeaders, 400);
+            }
+        }
+
+        if (url.pathname === "/apply-pending-race-scores" && request.method === "POST") {
+            try {
+                const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
+                const result = await applyPendingRaceScores({
+                    sheetId: SHEET_ID,
+                    accessToken,
+                });
+
+                return jsonResponse(
+                    {
+                        success: true,
+                        message: "Controllo automatico punteggi completato",
+                        applied: result.applied,
+                        skipped: result.skipped,
+                    },
+                    corsHeaders,
+                );
+            } catch (err) {
+                console.error(err);
+                return jsonResponse({ success: false, error: err.message }, corsHeaders, 400);
+            }
+        }
+
         if (url.pathname === "/race-schedule" && request.method === "GET") {
             const raceIdNumber = Number(url.searchParams.get("raceId"));
 
@@ -1212,5 +1394,27 @@ export default {
         }
 
         return new Response("FantaF1 API Operational", { headers: corsHeaders });
+    },
+
+    async scheduled(event, env, ctx) {
+        try {
+            const accessToken = await getAccessToken(env.GOOGLE_SERVICE_ACCOUNT_JSON);
+            const result = await applyPendingRaceScores({
+                sheetId: env.SHEET_ID,
+                accessToken,
+                now: new Date(event.scheduledTime || Date.now()),
+            });
+
+            console.log(
+                JSON.stringify({
+                    type: "scheduled_apply_pending_race_scores",
+                    appliedCount: result.applied.length,
+                    skippedCount: result.skipped.length,
+                }),
+            );
+        } catch (error) {
+            console.error("Errore scheduled applyPendingRaceScores", error);
+            throw error;
+        }
     },
 };
