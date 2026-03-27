@@ -291,16 +291,23 @@ async function apiFetchJson(path, options) {
     try {
       const response = await fetch(`${normalizedBase}${normalizedPath}`, options);
       const text = await response.text();
+      let payload = null;
+
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = null;
+        }
+      }
 
       if (!response.ok) {
-        throw new Error(`${response.status} ${text || 'empty response'}`);
+        const serverMessage = payload?.error || payload?.message;
+        throw new Error(serverMessage || `${response.status} ${text || 'empty response'}`);
       }
 
-      try {
-        return JSON.parse(text);
-      } catch {
-        throw new Error(`Risposta non JSON da ${normalizedBase}`);
-      }
+      if (payload !== null) return payload;
+      throw new Error(`Risposta non JSON da ${normalizedBase}`);
     } catch (error) {
       lastError = new Error(`${normalizedBase}: ${error.message}`);
     }
@@ -767,6 +774,7 @@ export default function App() {
   const [raceScheduleMap, setRaceScheduleMap] = useState({});
   const [savedPredictions, setSavedPredictions] = useState(EMPTY_PREDICTIONS);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [predictionSubmitStatus, setPredictionSubmitStatus] = useState(null);
   const historyStateKeyRef = useRef('');
 
   const races = standings?.races?.length >= DEFAULT_RACES.length ? standings.races : DEFAULT_RACES;
@@ -842,6 +850,7 @@ export default function App() {
           setOpenSection(null);
           setIsPredictionsOpen(false);
           setRaceLockInfo(null);
+          setPredictionSubmitStatus(null);
         } else if (activeTab !== 'races') {
           setActiveTab('races');
         }
@@ -857,6 +866,7 @@ export default function App() {
           setSelectedRace(targetRace);
           setOpenSection(null);
           setIsPredictionsOpen(false);
+          setPredictionSubmitStatus(null);
           await loadRacePredictions(targetRace);
         }
       } else {
@@ -864,6 +874,7 @@ export default function App() {
         setOpenSection(null);
         setIsPredictionsOpen(false);
         setRaceLockInfo(null);
+        setPredictionSubmitStatus(null);
       }
     };
 
@@ -942,6 +953,7 @@ export default function App() {
     setSelectedRace(null);
     setPredictions(EMPTY_PREDICTIONS);
     setSavedPredictions(EMPTY_PREDICTIONS);
+    setPredictionSubmitStatus(null);
     setLoginPassword('');
     setLoginName('');
     setLoginError('');
@@ -1008,6 +1020,7 @@ export default function App() {
     setOpenSection(null);
     setIsPredictionsOpen(false);
     setIsMenuOpen(false);
+    setPredictionSubmitStatus(null);
     await loadRacePredictions(race);
   };
 
@@ -1018,6 +1031,7 @@ export default function App() {
     setIsMenuOpen(false);
     setRaceLockInfo(null);
     setSavedPredictions(EMPTY_PREDICTIONS);
+    setPredictionSubmitStatus(null);
     setActiveTab(tab);
   };
 
@@ -1033,6 +1047,7 @@ export default function App() {
       }
     }
 
+    setPredictionSubmitStatus(null);
     setPredictions((prev) => ({ ...prev, [position]: driverId }));
   };
 
@@ -1042,6 +1057,7 @@ export default function App() {
 
     try {
       setIsSubmitting(true);
+      setPredictionSubmitStatus(null);
       const data = await apiFetchJson('/submit-prediction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1052,14 +1068,19 @@ export default function App() {
         })
       });
       if (!data.success) {
-        alert('Errore nel salvataggio del pronostico.');
-        return;
+        throw new Error(data.error || 'Errore nel salvataggio del pronostico.');
       }
 
-      alert('Pronostico salvato correttamente.');
+      setPredictionSubmitStatus({
+        type: 'success',
+        message: 'Pronostico salvato correttamente.'
+      });
       await loadRacePredictions(selectedRace);
-    } catch {
-      alert('Errore di rete nel salvataggio del pronostico.');
+    } catch (error) {
+      setPredictionSubmitStatus({
+        type: 'error',
+        message: error.message || 'Errore nel salvataggio del pronostico.'
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -1424,6 +1445,25 @@ export default function App() {
 
                     {canEditSelectedRace && (
                       <>
+                        {predictionSubmitStatus && (
+                          <div
+                            className={clsx(
+                              'rounded-2xl border px-4 py-3',
+                              predictionSubmitStatus.type === 'success'
+                                ? 'border-emerald-500/20 bg-emerald-500/10'
+                                : 'border-red-500/20 bg-red-500/10'
+                            )}
+                          >
+                            <p
+                              className={clsx(
+                                'text-sm',
+                                predictionSubmitStatus.type === 'success' ? 'text-emerald-200' : 'text-red-200'
+                              )}
+                            >
+                              {predictionSubmitStatus.message}
+                            </p>
+                          </div>
+                        )}
                         {hasInvalidPodiumPredictions && (
                           <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3">
                             <p className="text-sm text-red-200">

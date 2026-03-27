@@ -1103,7 +1103,10 @@ export default {
                 return jsonResponse({ success: true, ...scheduleInfo }, corsHeaders);
             } catch (err) {
                 console.error(err);
-                if (err.message.includes("429")) {
+                if (
+                    err.message.includes("429")
+                    || err.message.includes("Calendario Jolpi mancante")
+                ) {
                     const race = getRaceById(raceIdNumber);
                     return jsonResponse(
                         {
@@ -1112,7 +1115,9 @@ export default {
                             raceName: race?.name || "",
                             qualifying: null,
                             raceSession: null,
-                            warning: "Rate limit Jolpi, uso fallback vuoto temporaneo",
+                            warning: err.message.includes("429")
+                                ? "Rate limit Jolpi, uso fallback vuoto temporaneo"
+                                : "Calendario Jolpi non ancora disponibile, uso fallback vuoto temporaneo",
                         },
                         corsHeaders,
                     );
