@@ -5,37 +5,40 @@ const SCORE_COLUMNS = ["I", "J", "K", "L", "M", "N"];
 const SHEET_NAME = "Foglio1";
 const RACE_SCHEDULE_CACHE = new Map();
 const JOLPI_BASE_URL = "https://api.jolpi.ca/ergast/f1/2026";
+// Bahrain (id=5) e Arabia Saudita (id=6) sono stati cancellati dal calendario 2026.
+// Jolpi non include i round cancellati, quindi tutti i round da Miami in poi
+// sono scalati di -2 rispetto al numero originale.
 const JOLPI_ROUND_BY_RACE_ID = {
-    1: 1,
-    2: 2,
-    3: 2,
-    4: 3,
-    5: 4,
-    6: 5,
-    7: 6,
-    8: 6,
-    9: 7,
-    10: 7,
-    11: 8,
-    12: 9,
-    13: 10,
-    14: 11,
-    15: 11,
-    16: 12,
-    17: 13,
-    18: 14,
-    19: 14,
-    20: 15,
-    21: 16,
-    22: 17,
-    23: 18,
-    24: 18,
-    25: 19,
-    26: 20,
-    27: 21,
-    28: 22,
-    29: 23,
-    30: 24,
+    1: 1,   // Australia
+    2: 2,   // Cina Sprint
+    3: 2,   // Cina
+    4: 3,   // Giappone
+    5: 4,   // Bahrain (cancellato, round non usato)
+    6: 5,   // Arabia Saudita (cancellato, round non usato)
+    7: 4,   // Miami Sprint
+    8: 4,   // Miami
+    9: 5,   // Canada Sprint
+    10: 5,  // Canada
+    11: 6,  // Monaco
+    12: 7,  // Catalunya
+    13: 8,  // Austria
+    14: 9,  // UK Sprint
+    15: 9,  // UK
+    16: 10, // Belgio
+    17: 11, // Ungheria
+    18: 12, // Olanda Sprint
+    19: 12, // Olanda
+    20: 13, // Italia
+    21: 14, // Spagna
+    22: 15, // Azerbaijan
+    23: 16, // Singapore Sprint
+    24: 16, // Singapore
+    25: 17, // USA
+    26: 18, // Messico
+    27: 19, // Brasile
+    28: 20, // Las Vegas
+    29: 21, // Qatar
+    30: 22, // Abu Dhabi
 };
 const JOLPI_CACHE = {
     races: null,
