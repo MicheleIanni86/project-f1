@@ -785,6 +785,16 @@ export default function App() {
   const hasOngoingRaces = racesWithStatus.some((race) => race.isLocked || race.isOngoing);
   const activeRaceIdsKey = racesWithStatus.filter((race) => !race.done && !race.isCancelled).map((race) => race.id).join(',');
   const nextUpcomingRace = racesWithStatus.find((race) => !race.done && !race.isLocked && !race.isOngoing && !race.isCancelled) || null;
+  // Tutte le gare dello stesso weekend (lockStartsAt entro 4 giorni dalla prima) sono aperte insieme.
+  const FOUR_DAYS_MS = 4 * 24 * 60 * 60 * 1000;
+  const nextWeekendRaces = nextUpcomingRace
+    ? racesWithStatus.filter((race) =>
+        !race.done && !race.isLocked && !race.isOngoing && !race.isCancelled
+        && race.lockStartsAt && nextUpcomingRace.lockStartsAt
+        && (race.lockStartsAt - nextUpcomingRace.lockStartsAt) <= FOUR_DAYS_MS
+        && (race.lockStartsAt - nextUpcomingRace.lockStartsAt) >= 0
+      )
+    : [];
   const filteredRaces = racesWithStatus.filter((race) => {
     if (race.isCancelled) return false;
     if (raceFilter === 'past') return race.done;
@@ -804,8 +814,7 @@ export default function App() {
   const isScoreAdmin = currentUser === 'Michele';
   const canEditSelectedRace = Boolean(
     selectedRace
-    && nextUpcomingRace
-    && selectedRace.id === nextUpcomingRace.id
+    && nextWeekendRaces.some((r) => r.id === selectedRace.id)
     && !selectedRace.done
     && !selectedRace.isLocked
     && !selectedRace.isOngoing
@@ -1292,7 +1301,7 @@ export default function App() {
 
                 <div className="space-y-3">
                   {filteredRaces.map((race) => {
-                    const isNextAvailableRace = nextUpcomingRace?.id === race.id;
+                    const isNextAvailableRace = nextWeekendRaces.some((r) => r.id === race.id);
                     const raceSchedule = raceScheduleMap[race.id];
                     const { qualifyingLabel, raceLabel, weekendDayBadge } = getRaceCardSchedule(race, raceSchedule);
                     return (
