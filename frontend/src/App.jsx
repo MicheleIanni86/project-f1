@@ -129,13 +129,17 @@ function normalizeRace(race, raceSchedule) {
   }
 
   const deadline = toRaceDate(race);
-  const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+  // Jolpi non fornisce la fine delle qualifiche: stimiamo 1 ora di durata + 6 ore di finestra = 7 ore dall'inizio
+  const SEVEN_HOURS_MS = 7 * 60 * 60 * 1000;
+  const qualifyingStart = raceSchedule?.qualifying?.dateStart
+    ? new Date(raceSchedule.qualifying.dateStart)
+    : null;
+  const lockStartsAt = qualifyingStart
+    ? new Date(qualifyingStart.getTime() + SEVEN_HOURS_MS)
+    : deadline;
   const raceStartsAt = raceSchedule?.raceSession?.dateStart
     ? new Date(raceSchedule.raceSession.dateStart)
     : addDays(deadline, 1);
-  const lockStartsAt = raceStartsAt
-    ? new Date(raceStartsAt.getTime() - SIX_HOURS_MS)
-    : deadline;
   const raceDayEndsAt = endOfRaceDay(raceStartsAt);
   const now = new Date();
 
@@ -1458,7 +1462,7 @@ export default function App() {
                           Pronostici bloccati
                         </p>
                         <p className="text-sm text-amber-50/80 mt-1">
-                          Mancano meno di 6 ore all'inizio della gara, quindi per questa gara non puoi piu modificare il pronostico.
+                          Sono passate piu di 6 ore dalla fine delle qualifiche, quindi per questa gara non puoi piu modificare il pronostico.
                         </p>
                       </div>
                     )}
