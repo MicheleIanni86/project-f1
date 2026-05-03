@@ -369,18 +369,20 @@ async function getPredictionLockInfo(raceId) {
     }
 
     const roundRace = await getJolpiRoundRace(race);
-    const sessionName = getExpectedSessionName(race);
-    const session = race.isSprint ? roundRace.SprintQualifying : roundRace.Qualifying;
-    const selectedSession = session ? { dateStart: toSessionDate(session) } : null;
+    const raceSessionRaw = race.isSprint ? roundRace.Sprint : roundRace;
+    const raceStartsAt = toSessionDate(raceSessionRaw);
+    const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+    const lockAt = raceStartsAt
+        ? new Date(raceStartsAt.getTime() - SIX_HOURS_MS)
+        : new Date(deadline.getTime() - SIX_HOURS_MS);
     const now = new Date();
-    const lockAt = selectedSession?.dateStart || deadline;
 
     return {
         raceId,
         raceName: race.name,
-        sessionName,
+        sessionName: getRaceSessionName(race),
         lockAt: lockAt.toISOString(),
-        source: selectedSession ? "jolpi" : "race_deadline_fallback",
+        source: raceStartsAt ? "jolpi" : "race_deadline_fallback",
         isLocked: now >= lockAt,
     };
 }
@@ -446,7 +448,7 @@ async function assertPredictionWindowOpen(raceId) {
 
     const lockInfo = await getPredictionLockInfo(raceId);
     if (lockInfo.isLocked) {
-        throw new Error("Pronostici bloccati: qualifiche gia iniziate");
+        throw new Error("Pronostici bloccati: mancano meno di 6 ore all'inizio della gara");
     }
 }
 

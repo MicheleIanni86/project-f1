@@ -129,12 +129,13 @@ function normalizeRace(race, raceSchedule) {
   }
 
   const deadline = toRaceDate(race);
-  const lockStartsAt = raceSchedule?.qualifying?.dateStart
-    ? new Date(raceSchedule.qualifying.dateStart)
-    : deadline;
+  const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
   const raceStartsAt = raceSchedule?.raceSession?.dateStart
     ? new Date(raceSchedule.raceSession.dateStart)
     : addDays(deadline, 1);
+  const lockStartsAt = raceStartsAt
+    ? new Date(raceStartsAt.getTime() - SIX_HOURS_MS)
+    : deadline;
   const raceDayEndsAt = endOfRaceDay(raceStartsAt);
   const now = new Date();
 
@@ -1457,7 +1458,7 @@ export default function App() {
                           Pronostici bloccati
                         </p>
                         <p className="text-sm text-amber-50/80 mt-1">
-                          Le qualifiche sono iniziate, quindi per questa gara non puoi piu modificare il pronostico.
+                          Mancano meno di 6 ore all'inizio della gara, quindi per questa gara non puoi piu modificare il pronostico.
                         </p>
                       </div>
                     )}
