@@ -1,97 +1,12 @@
+import { RACES, CALENDAR_VERSION, getRaceTiming, resolveSeasonRace } from "../../shared/calendar.mjs";
 import fallbackStandings from "../standings.json" with { type: "json" };
 
 const PLAYERS = ["Andrea", "Giovanni", "Luca", "Marco", "Michele", "Salvo"];
 const SCORE_COLUMNS = ["I", "J", "K", "L", "M", "N"];
 const SHEET_NAME = "Foglio1";
-const RACE_SCHEDULE_CACHE = new Map();
 const JOLPI_BASE_URL = "https://api.jolpi.ca/ergast/f1/2026";
-// Bahrain (id=5) e Arabia Saudita (id=6) sono stati cancellati dal calendario 2026.
-// Jolpi non include i round cancellati, quindi tutti i round da Miami in poi
-// sono scalati di -2 rispetto al numero originale.
-const JOLPI_ROUND_BY_RACE_ID = {
-    1: 1,   // Australia
-    2: 2,   // Cina Sprint
-    3: 2,   // Cina
-    4: 3,   // Giappone
-    5: 4,   // Bahrain (cancellato, round non usato)
-    6: 5,   // Arabia Saudita (cancellato, round non usato)
-    7: 4,   // Miami Sprint
-    8: 4,   // Miami
-    9: 5,   // Canada Sprint
-    10: 5,  // Canada
-    11: 6,  // Monaco
-    12: 7,  // Catalunya
-    13: 8,  // Austria
-    14: 9,  // UK Sprint
-    15: 9,  // UK
-    16: 10, // Belgio
-    17: 11, // Ungheria
-    18: 12, // Olanda Sprint
-    19: 12, // Olanda
-    20: 13, // Italia
-    21: 14, // Spagna
-    22: 15, // Azerbaijan
-    23: 16, // Singapore Sprint
-    24: 16, // Singapore
-    25: 17, // USA
-    26: 18, // Messico
-    27: 19, // Brasile
-    28: 20, // Las Vegas
-    29: 21, // Qatar
-    30: 22, // Abu Dhabi
-};
-const JOLPI_CACHE = {
-    races: null,
-    qualifyingByRound: new Map(),
-    resultsByRound: new Map(),
-    sprintByRound: new Map(),
-};
-const MONTH_MAP = {
-    GEN: 0,
-    FEB: 1,
-    MAR: 2,
-    APR: 3,
-    MAG: 4,
-    GIU: 5,
-    LUG: 6,
-    AGO: 7,
-    SET: 8,
-    OTT: 9,
-    NOV: 10,
-    DIC: 11,
-};
-const RACES = [
-    { id: 1, name: "AUSTRALIA", date: "07 MAR", time: "06:00", isSprint: false },
-    { id: 2, name: "CINA SPRINT", date: "13 MAR", time: "08:30", isSprint: true },
-    { id: 3, name: "CINA", date: "14 MAR", time: "08:00", isSprint: false },
-    { id: 4, name: "GIAPPONE", date: "28 MAR", time: "07:00", isSprint: false },
-    { id: 5, name: "BAHRAIN", date: "11 APR", time: "18:00", isSprint: false, isCancelled: true },
-    { id: 6, name: "ARABIA SAUDITA", date: "18 APR", time: "19:00", isSprint: false, isCancelled: true },
-    { id: 7, name: "MIAMI SPRINT", date: "01 MAG", time: "22:30", isSprint: true },
-    { id: 8, name: "MIAMI", date: "02 MAG", time: "22:00", isSprint: false },
-    { id: 9, name: "CANADA SPRINT", date: "22 MAG", time: "22:30", isSprint: true },
-    { id: 10, name: "CANADA", date: "23 MAG", time: "22:00", isSprint: false },
-    { id: 11, name: "MONACO", date: "06 GIU", time: "16:00", isSprint: false },
-    { id: 12, name: "CATALUNYA", date: "13 GIU", time: "16:00", isSprint: false },
-    { id: 13, name: "AUSTRIA", date: "27 GIU", time: "16:00", isSprint: false },
-    { id: 14, name: "UK SPRINT", date: "03 LUG", time: "17:30", isSprint: true },
-    { id: 15, name: "UK", date: "04 LUG", time: "17:00", isSprint: false },
-    { id: 16, name: "BELGIO", date: "18 LUG", time: "16:00", isSprint: false },
-    { id: 17, name: "UNGHERIA", date: "25 LUG", time: "16:00", isSprint: false },
-    { id: 18, name: "OLANDA SPRINT", date: "21 AGO", time: "16:30", isSprint: true },
-    { id: 19, name: "OLANDA", date: "22 AGO", time: "16:00", isSprint: false },
-    { id: 20, name: "ITALIA", date: "05 SET", time: "16:00", isSprint: false },
-    { id: 21, name: "SPAGNA", date: "12 SET", time: "16:00", isSprint: false },
-    { id: 22, name: "AZERBAIJAN", date: "25 SET", time: "14:00", isSprint: false },
-    { id: 23, name: "SINGAPORE SPRINT", date: "09 OTT", time: "14:30", isSprint: true },
-    { id: 24, name: "SINGAPORE", date: "10 OTT", time: "15:00", isSprint: false },
-    { id: 25, name: "USA", date: "24 OTT", time: "23:00", isSprint: false },
-    { id: 26, name: "MESSICO", date: "31 OTT", time: "22:00", isSprint: false },
-    { id: 27, name: "BRASILE", date: "07 NOV", time: "19:00", isSprint: false },
-    { id: 28, name: "LAS VEGAS", date: "21 NOV", time: "05:00", isSprint: false },
-    { id: 29, name: "QATAR", date: "28 NOV", time: "19:00", isSprint: false },
-    { id: 30, name: "ABU DHABI", date: "05 DIC", time: "15:00", isSprint: false },
-];
+const JOLPI_CACHE = new Map();
+const JOLPI_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const PLAYER_COLUMNS = {
     Andrea: "C",
@@ -141,6 +56,19 @@ function getRaceById(raceId) {
     return RACES.find((race) => race.id === raceId) || null;
 }
 
+function assertRaceSheetLabel(race, label) {
+    const normalize = (value) => String(value || "").trim().replace(/\s+/g, " ").toUpperCase();
+    if (!race || normalize(label) !== normalize(race.sheetName)) {
+        throw new Error("La struttura del foglio non corrisponde alla gara: operazione bloccata");
+    }
+}
+
+function assertCalendarVersion(body) {
+    if (body.calendarVersion !== CALENDAR_VERSION) {
+        throw new Error("Il calendario è stato aggiornato: ricarica la pagina prima di continuare");
+    }
+}
+
 function isRaceCancelled(race) {
     return Boolean(race?.isCancelled);
 }
@@ -152,27 +80,6 @@ function normalizeDriverName(value) {
     }
 
     return DRIVER_ALIASES[raw] || `${raw[0]}${raw.slice(1).toLowerCase()}`;
-}
-
-function toRaceDate(race) {
-    const [day, month] = race.date.split(" ");
-    const monthIndex = MONTH_MAP[month];
-    if (monthIndex === undefined) {
-        return null;
-    }
-
-    const [hours, minutes] = race.time.split(":").map(Number);
-    return new Date(2026, monthIndex, Number(day), hours, minutes);
-}
-
-function addDays(date, amount) {
-    const next = new Date(date);
-    next.setDate(next.getDate() + amount);
-    return next;
-}
-
-function formatDateOnly(date) {
-    return date.toISOString().slice(0, 10);
 }
 
 function getExpectedSessionName(race) {
@@ -204,20 +111,12 @@ async function fetchJolpiMrData(path) {
     return data?.MRData || {};
 }
 
-function getJolpiRound(race) {
-    const round = JOLPI_ROUND_BY_RACE_ID[race?.id];
-    if (!round) {
-        throw new Error(`Round Jolpi non configurato per ${race?.name || "gara sconosciuta"}`);
-    }
-    return round;
-}
-
 function toSessionDate(session) {
-    if (!session?.date) {
+    if (!session?.date || !session?.time) {
         return null;
     }
 
-    const time = session.time || "00:00:00Z";
+    const time = session.time;
     const parsed = new Date(`${session.date}T${time}`);
     return Number.isNaN(parsed.valueOf()) ? null : parsed;
 }
@@ -237,63 +136,32 @@ function getSessionPayload(sessionName, session) {
     };
 }
 
-async function getJolpiSeasonRaces() {
-    if (!JOLPI_CACHE.races) {
-        JOLPI_CACHE.races = fetchJolpiMrData("/races/");
-    }
-    return JOLPI_CACHE.races;
+async function getCachedJolpiData(path) {
+    const current = JOLPI_CACHE.get(path);
+    if (current && current.expiresAt > Date.now()) return current.promise;
+    const entry = { expiresAt: Date.now() + JOLPI_CACHE_TTL_MS };
+    entry.promise = fetchJolpiMrData(path).catch((error) => {
+        if (JOLPI_CACHE.get(path) === entry) JOLPI_CACHE.delete(path);
+        throw error;
+    });
+    JOLPI_CACHE.set(path, entry);
+    return entry.promise;
 }
 
 async function getJolpiRoundRace(race) {
-    const round = getJolpiRound(race);
-    const data = await getJolpiSeasonRaces();
-    const races = data?.RaceTable?.Races || [];
-    const roundRace = races.find((item) => Number(item.round) === round) || null;
-
-    if (!roundRace) {
-        throw new Error(`Calendario Jolpi mancante per round ${round}`);
-    }
-
-    return roundRace;
+    const data = await getCachedJolpiData("/races/?limit=100");
+    return resolveSeasonRace(race, data?.RaceTable?.Races || []);
 }
 
-async function getJolpiQualifyingRace(round) {
-    if (!JOLPI_CACHE.qualifyingByRound.has(round)) {
-        JOLPI_CACHE.qualifyingByRound.set(round, fetchJolpiMrData(`/${round}/qualifying/`));
+async function getJolpiResultRace(roundRace, kind) {
+    const round = Number(roundRace.round);
+    if (!Number.isInteger(round) || round < 1) throw new Error("Round Jolpi non valido");
+    const data = await getCachedJolpiData('/' + round + '/' + kind + '/');
+    const result = data?.RaceTable?.Races?.[0];
+    if (!result || result.season !== roundRace.season || result.Circuit?.circuitId !== roundRace.Circuit.circuitId || result.date !== roundRace.date) {
+        throw new Error("Risultati Jolpi mancanti o riferiti a un'altra gara");
     }
-
-    const data = await JOLPI_CACHE.qualifyingByRound.get(round);
-    const race = data?.RaceTable?.Races?.[0] || null;
-    if (!race) {
-        throw new Error(`Qualifiche Jolpi mancanti per round ${round}`);
-    }
-    return race;
-}
-
-async function getJolpiResultsRace(round) {
-    if (!JOLPI_CACHE.resultsByRound.has(round)) {
-        JOLPI_CACHE.resultsByRound.set(round, fetchJolpiMrData(`/${round}/results/`));
-    }
-
-    const data = await JOLPI_CACHE.resultsByRound.get(round);
-    const race = data?.RaceTable?.Races?.[0] || null;
-    if (!race) {
-        throw new Error(`Risultati Jolpi mancanti per round ${round}`);
-    }
-    return race;
-}
-
-async function getJolpiSprintRace(round) {
-    if (!JOLPI_CACHE.sprintByRound.has(round)) {
-        JOLPI_CACHE.sprintByRound.set(round, fetchJolpiMrData(`/${round}/sprint/`));
-    }
-
-    const data = await JOLPI_CACHE.sprintByRound.get(round);
-    const race = data?.RaceTable?.Races?.[0] || null;
-    if (!race) {
-        throw new Error(`Sprint Jolpi mancante per round ${round}`);
-    }
-    return race;
+    return result;
 }
 
 function parseLapTimeToMs(value) {
@@ -363,94 +231,41 @@ async function getPredictionLockInfo(raceId) {
         };
     }
 
-    const deadline = toRaceDate(race);
-    if (!deadline) {
-        throw new Error("Deadline gara non configurata");
+    const schedule = await getRaceScheduleInfo(raceId);
+    if (!schedule.qualifying || !schedule.raceSession) {
+        throw new Error("Orari ufficiali incompleti: impossibile verificare la chiusura pronostici");
     }
-
-    const roundRace = await getJolpiRoundRace(race);
-    const sessionName = getExpectedSessionName(race);
-    const session = race.isSprint ? roundRace.SprintQualifying : roundRace.Qualifying;
-    const qualifyingStart = session ? toSessionDate(session) : null;
-    // Jolpi non fornisce l'orario di fine qualifiche: stimiamo 1 ora di durata + 6 ore di finestra = 7 ore dall'inizio
-    const SEVEN_HOURS_MS = 7 * 60 * 60 * 1000;
-    const lockAt = qualifyingStart
-        ? new Date(qualifyingStart.getTime() + SEVEN_HOURS_MS)
-        : deadline;
-    const now = new Date();
-
+    const { lockStartsAt } = getRaceTiming(race, schedule);
+    if (!lockStartsAt) throw new Error("Orario di chiusura pronostici non disponibile");
     return {
         raceId,
         raceName: race.name,
-        sessionName,
-        lockAt: lockAt.toISOString(),
-        source: qualifyingStart ? "jolpi" : "race_deadline_fallback",
-        isLocked: now >= lockAt,
+        sessionName: getExpectedSessionName(race),
+        lockAt: lockStartsAt.toISOString(),
+        source: "jolpi",
+        isLocked: new Date() >= lockStartsAt,
     };
 }
 
 async function getRaceScheduleInfo(raceId) {
     const race = getRaceById(raceId);
-    if (!race) {
-        throw new Error("Gara non supportata");
-    }
+    if (!race) throw new Error("Gara non supportata");
     if (isRaceCancelled(race)) {
-        return {
-            raceId,
-            raceName: race.name,
-            isCancelled: true,
-            qualifying: null,
-            raceSession: null,
-        };
+        return { raceId, raceName: race.name, isCancelled: true, qualifying: null, raceSession: null };
     }
-
-    if (RACE_SCHEDULE_CACHE.has(raceId)) {
-        return RACE_SCHEDULE_CACHE.get(raceId);
-    }
-
-    const deadline = toRaceDate(race);
-    if (!deadline) {
-        throw new Error("Deadline gara non configurata");
-    }
-
     const roundRace = await getJolpiRoundRace(race);
-    const qualifyingSessionName = getExpectedSessionName(race);
-    const raceSessionName = getRaceSessionName(race);
-    const qualifying = getSessionPayload(
-        qualifyingSessionName,
-        race.isSprint ? roundRace.SprintQualifying : roundRace.Qualifying,
-    );
-    const raceSession = getSessionPayload(
-        raceSessionName,
-        race.isSprint ? roundRace.Sprint : roundRace,
-    );
-
-    const payload = {
+    return {
         raceId,
         raceName: race.name,
-        qualifying,
-        raceSession,
+        qualifying: getSessionPayload(getExpectedSessionName(race), race.isSprint ? roundRace.SprintQualifying : roundRace.Qualifying),
+        raceSession: getSessionPayload(getRaceSessionName(race), race.isSprint ? roundRace.Sprint : roundRace),
     };
-
-    RACE_SCHEDULE_CACHE.set(raceId, payload);
-    return payload;
 }
 
 async function assertPredictionWindowOpen(raceId) {
-    const race = getRaceById(raceId);
-    if (isRaceCancelled(race)) {
-        throw new Error("Pronostici disabilitati: gara annullata");
-    }
-    const deadline = toRaceDate(race);
-    const now = new Date();
-
-    if (deadline && now >= deadline) {
-        throw new Error("Pronostici chiusi per questa gara");
-    }
-
     const lockInfo = await getPredictionLockInfo(raceId);
     if (lockInfo.isLocked) {
-        throw new Error("Pronostici bloccati: sono passate piu di 6 ore dalla fine delle qualifiche");
+        throw new Error("Pronostici chiusi per questa gara");
     }
 }
 
@@ -683,10 +498,10 @@ async function writeValues({
 }
 
 async function getOfficialRaceResult(race) {
-    const round = getJolpiRound(race);
+    const roundRace = await getJolpiRoundRace(race);
 
     if (race.isSprint) {
-        const sprintRace = await getJolpiSprintRace(round);
+        const sprintRace = await getJolpiResultRace(roundRace, "sprint");
         const sprintResults = sprintRace.SprintResults || [];
 
         return {
@@ -696,8 +511,8 @@ async function getOfficialRaceResult(race) {
     }
 
     const [qualifyingRace, resultsRace] = await Promise.all([
-        getJolpiQualifyingRace(round),
-        getJolpiResultsRace(round),
+        getJolpiResultRace(roundRace, "qualifying"),
+        getJolpiResultRace(roundRace, "results"),
     ]);
 
     return {
@@ -805,6 +620,7 @@ async function buildRaceScoresPayload({ sheetId, accessToken, raceId }) {
         accessToken,
         range: readRangeA1,
     });
+    assertRaceSheetLabel(race, raceValues.values?.[0]?.[0]);
     const parsed = parseRaceSheetValues(race, raceValues.values || []);
     const official = await getOfficialRaceResult(race);
     const scoreValues = PLAYERS.map((player) =>
@@ -843,14 +659,11 @@ async function applyRaceScores({ sheetId, accessToken, raceId }) {
     return payload;
 }
 
-function getRaceAutoScoreAvailableAt(race) {
-    const raceDate = toRaceDate(race);
-    if (!raceDate) {
-        return null;
-    }
-
-    // Wait until the day after the race weekend before auto-writing scores.
-    return addDays(raceDate, 1);
+async function getRaceAutoScoreAvailableAt(race) {
+    const schedule = await getRaceScheduleInfo(race.id);
+    const { raceStartsAt } = getRaceTiming(race, schedule);
+    // A complete day after the actual session, never after a guessed qualifying date.
+    return raceStartsAt ? new Date(raceStartsAt.getTime() + 24 * 60 * 60 * 1000) : null;
 }
 
 async function hasStoredScores({ sheetId, accessToken, raceId }) {
@@ -874,7 +687,13 @@ async function applyPendingRaceScores({ sheetId, accessToken, now = new Date() }
             continue;
         }
 
-        const availableAt = getRaceAutoScoreAvailableAt(race);
+        let availableAt;
+        try {
+            availableAt = await getRaceAutoScoreAvailableAt(race);
+        } catch (error) {
+            skipped.push({ raceId: race.id, raceName: race.name, reason: "schedule_unavailable", error: error.message });
+            continue;
+        }
         if (!availableAt || now < availableAt) {
             skipped.push({ raceId: race.id, raceName: race.name, reason: "not_ready_yet" });
             continue;
@@ -1022,7 +841,7 @@ function buildStandingsPayload(sourceStandings, races = [], midSeasonPredictions
 function getFallbackPayload() {
     return buildStandingsPayload(
         fallbackStandings.standings || [],
-        fallbackStandings.races?.length ? fallbackStandings.races : RACES,
+        RACES.map((race) => ({ ...race, points: fallbackStandings.races?.find((entry) => entry.id === race.id)?.points || {} })),
         fallbackStandings.championship?.midSeasonPredictions || [],
     );
 }
@@ -1118,9 +937,19 @@ export default {
 
         const url = new URL(request.url);
 
+        if (url.pathname === "/race-schedules" && request.method === "GET") {
+            try {
+                const schedules = await Promise.all(RACES.map((race) => getRaceScheduleInfo(race.id)));
+                return jsonResponse({ success: true, schedules }, corsHeaders);
+            } catch (error) {
+                return jsonResponse({ success: false, error: error.message }, corsHeaders, 503);
+            }
+        }
+
         if (url.pathname === "/submit-prediction" && request.method === "POST") {
             try {
                 const body = await request.json();
+                assertCalendarVersion(body);
                 const { user, raceId, predictions } = body;
 
                 if (!PLAYER_COLUMNS[user]) {
@@ -1139,6 +968,8 @@ export default {
 
                 const rows = getRaceRows(raceIdNumber);
                 const accessToken = await getAccessToken(GOOGLE_SERVICE_ACCOUNT_JSON);
+                const label = await readSheetRange({ sheetId: SHEET_ID, accessToken, range: `${SHEET_NAME}!A${rows.pole}:A${rows.pole}` });
+                assertRaceSheetLabel(getRaceById(raceIdNumber), label.values?.[0]?.[0]);
                 const col = PLAYER_COLUMNS[user];
                 const positions = ["pole", "first", "second", "third"];
 
@@ -1222,6 +1053,7 @@ export default {
         if (url.pathname === "/apply-race-scores" && request.method === "POST") {
             try {
                 const body = await request.json().catch(() => ({}));
+                assertCalendarVersion(body);
                 const raceIdNumber = Number(body?.raceId ?? url.searchParams.get("raceId"));
 
                 if (!Number.isInteger(raceIdNumber) || raceIdNumber < 1) {
@@ -1382,6 +1214,7 @@ export default {
                     accessToken,
                     range: raceRange,
                 });
+                assertRaceSheetLabel(getRaceById(raceIdNumber), raceRes.values?.[0]?.[0]);
 
                 return jsonResponse(
                     buildRacePredictionsPayload(raceIdNumber, raceRes.values || []),
@@ -1425,3 +1258,6 @@ export default {
         }
     },
 };
+
+// Named exports support read-only regression tests; the Worker uses the default export.
+export { getRaceRows, getScoreRange, getRaceScheduleInfo, getPredictionLockInfo, assertPredictionWindowOpen, getOfficialRaceResult, getRaceAutoScoreAvailableAt, buildRacePredictionsPayload, buildRaceSummaries, getFallbackPayload, assertRaceSheetLabel };
