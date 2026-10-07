@@ -1,3 +1,7 @@
 fanta-f1-2026-f16d510d825b.json
 .local-backups/
-backend/.wrangler/
+
+# Wrangler writes the Cloudflare account id and account name here on every
+# deploy. Local cache, regenerated on demand, and this repo is public.
+.wrangler/
+**/node_modules/.cache/
