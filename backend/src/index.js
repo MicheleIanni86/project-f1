@@ -631,6 +631,7 @@ async function buildRaceScoresPayload({ sheetId, accessToken, raceId }) {
     return {
         race,
         official,
+        parsed,
         readRangeA1,
         writeRangeA1,
         scoreValues,
@@ -639,6 +640,101 @@ async function buildRaceScoresPayload({ sheetId, accessToken, raceId }) {
             score: scoreValues[index],
         })),
     };
+}
+
+// Fill colours already used by hand in the sheet, one per scoring outcome of
+// computeRaceScore: exact pole (+2), exact podium slot (+3), right driver on the
+// wrong step (+1). A wrong guess is cleared back to the default white.
+const SCORE_FILLS = {
+    pole: { red: 1, green: 0.6, blue: 0 },
+    exact: { red: 0, green: 1, blue: 0 },
+    onPodium: { red: 1, green: 1, blue: 0 },
+    miss: { red: 1, green: 1, blue: 1 },
+};
+
+function getPredictionFillKey({ driver, position, official }) {
+    if (position === "pole") {
+        return driver === official.pole ? "pole" : "miss";
+    }
+    if (driver === official.podium[position]) {
+        return "exact";
+    }
+    return official.podium.includes(driver) ? "onPodium" : "miss";
+}
+
+// One request per cell: a blank prediction is skipped so the manual red "non ha
+// giocato" marker survives a recalculation.
+function buildPredictionFillRequests({ race, gridId, parsed, official }) {
+    const rows = getRaceRows(race.id);
+    const requests = [];
+
+    for (const player of PLAYERS) {
+        const prediction = parsed.predictions[player];
+        const columnIndex = PLAYER_COLUMNS[player].charCodeAt(0) - "A".charCodeAt(0);
+        const cells = [
+            { position: "pole", driver: prediction.pole, row: rows.pole },
+            { position: 0, driver: prediction.podium[0], row: rows.first },
+            { position: 1, driver: prediction.podium[1], row: rows.second },
+            { position: 2, driver: prediction.podium[2], row: rows.third },
+        ];
+
+        for (const cell of cells) {
+            if (!cell.driver) {
+                continue;
+            }
+            const fill = SCORE_FILLS[getPredictionFillKey({ driver: cell.driver, position: cell.position, official })];
+            requests.push({
+                repeatCell: {
+                    range: {
+                        sheetId: gridId,
+                        startRowIndex: cell.row - 1,
+                        endRowIndex: cell.row,
+                        startColumnIndex: columnIndex,
+                        endColumnIndex: columnIndex + 1,
+                    },
+                    cell: { userEnteredFormat: { backgroundColor: fill } },
+                    fields: "userEnteredFormat.backgroundColor",
+                },
+            });
+        }
+    }
+
+    return requests;
+}
+
+async function getSheetGridId({ sheetId, accessToken, title }) {
+    const res = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}?fields=sheets.properties`,
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Errore lettura struttura Sheets: ${res.status} ${text}`);
+    }
+
+    const data = await res.json();
+    const match = (data.sheets || []).find((entry) => entry.properties?.title === title);
+    if (!match) {
+        throw new Error(`Foglio "${title}" non trovato`);
+    }
+    return match.properties.sheetId;
+}
+
+async function batchUpdate({ sheetId, accessToken, requests }) {
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}:batchUpdate`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ requests }),
+    });
+
+    if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Errore formattazione Sheets: ${res.status} ${text}`);
+    }
 }
 
 async function applyRaceScores({ sheetId, accessToken, raceId }) {
@@ -656,7 +752,18 @@ async function applyRaceScores({ sheetId, accessToken, raceId }) {
         valueInputOption: "RAW",
     });
 
-    return payload;
+    const gridId = await getSheetGridId({ sheetId, accessToken, title: SHEET_NAME });
+    const requests = buildPredictionFillRequests({
+        race: payload.race,
+        gridId,
+        parsed: payload.parsed,
+        official: payload.official,
+    });
+    if (requests.length) {
+        await batchUpdate({ sheetId, accessToken, requests });
+    }
+
+    return { ...payload, colouredCells: requests.length };
 }
 
 async function getRaceAutoScoreAvailableAt(race) {
@@ -1260,4 +1367,4 @@ export default {
 };
 
 // Named exports support read-only regression tests; the Worker uses the default export.
-export { getRaceRows, getScoreRange, getRaceScheduleInfo, getPredictionLockInfo, assertPredictionWindowOpen, getOfficialRaceResult, getRaceAutoScoreAvailableAt, buildRacePredictionsPayload, buildRaceSummaries, getFallbackPayload, assertRaceSheetLabel };
+export { getRaceRows, getScoreRange, getRaceScheduleInfo, getPredictionLockInfo, assertPredictionWindowOpen, getOfficialRaceResult, getRaceAutoScoreAvailableAt, buildRacePredictionsPayload, buildRaceSummaries, getFallbackPayload, assertRaceSheetLabel, buildPredictionFillRequests, SCORE_FILLS };
