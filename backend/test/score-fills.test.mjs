@@ -105,6 +105,31 @@ test('leaves a blank prediction untouched so the manual red marker survives', ()
   assert.deepEqual(fillAt(requests, rows.third, 'E'), SCORE_FILLS.onPodium);
 });
 
+test('a manual penalty written instead of a driver keeps its red marker', () => {
+  // Rows 75-78 and 87-90 of the real sheet hold "-2"/"-3" penalties in the
+  // prediction columns, flagged red by hand. A recalc must not repaint them.
+  const official = { pole: 'Russell', podium: ['Russell', 'Verstappen', 'Hadjar'] };
+  const parsed = parse({
+    Andrea: ['-2', '-3', '', ''],
+    Giovanni: ['Russell', 'Russell', 'Verstappen', 'Norris'],
+    Luca: ['-2', 'Russell', 'Antonelli', 'Verstappen'],
+    Marco: ['Russell', 'Russell', 'Antonelli', 'Verstappen'],
+    Michele: ['-2.0', 'Verstappen', 'Antonelli', 'Russell'],
+    Salvo: ['', 'Hamilton', 'Antonelli', 'Verstappen'],
+  });
+  const requests = buildPredictionFillRequests({ race: race(22), gridId: GRID_ID, parsed, official });
+  const rows = getRaceRows(22);
+
+  assert.equal(fillAt(requests, rows.pole, 'C'), undefined);
+  assert.equal(fillAt(requests, rows.first, 'C'), undefined);
+  assert.equal(fillAt(requests, rows.pole, 'E'), undefined);
+  assert.equal(fillAt(requests, rows.pole, 'G'), undefined);
+  // Real picks in the same block are still painted.
+  assert.deepEqual(fillAt(requests, rows.pole, 'D'), SCORE_FILLS.pole);
+  assert.deepEqual(fillAt(requests, rows.first, 'E'), SCORE_FILLS.exact);
+  assert.deepEqual(fillAt(requests, rows.third, 'G'), SCORE_FILLS.onPodium);
+});
+
 test('every request targets one cell of the race block and only paints the background', () => {
   const official = { pole: 'Verstappen', podium: ['Verstappen', 'Antonelli', 'Hamilton'] };
   const parsed = parse(Object.fromEntries(PLAYERS.map((player) =>

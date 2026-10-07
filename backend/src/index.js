@@ -679,7 +679,9 @@ function buildPredictionFillRequests({ race, gridId, parsed, official }) {
         ];
 
         for (const cell of cells) {
-            if (!cell.driver) {
+            // Blank cells, and the manual penalties some blocks carry instead of a
+            // driver (-2, -3), keep whatever the sheet already shows for them.
+            if (!cell.driver || Number.isFinite(Number(cell.driver))) {
                 continue;
             }
             const fill = SCORE_FILLS[getPredictionFillKey({ driver: cell.driver, position: cell.position, official })];
