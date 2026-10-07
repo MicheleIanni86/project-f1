@@ -4,7 +4,7 @@
   "description": "",
   "main": "read_excel.js",
   "scripts": {
-    "dev": "node frontend/node_modules/vite/bin/vite.js --config frontend/vite.config.js",
+    "dev": "npm run dev --prefix frontend",
     "backend:dev": "npm run dev --prefix backend",
     "backend:deploy": "npm run deploy --prefix backend",
     "frontend:build": "npm run build --prefix frontend",
