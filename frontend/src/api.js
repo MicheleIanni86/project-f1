@@ -1,7 +1,19 @@
 const DEFAULT_API_BASE = 'https://fanta-f1-backend.michelepizzica.workers.dev';
+// A base without a scheme would resolve as a path on the page origin and hit the SPA
+// fallback (HTML on GET, 405 on POST) instead of the API, so normalise before using it.
+const toAbsoluteBase = (value) => {
+  if (!value) return null;
+  try {
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+    return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+  } catch {
+    return null;
+  }
+};
+
 const API_BASES = [...new Set([import.meta.env.VITE_API_BASE_URL, DEFAULT_API_BASE]
-  .filter(Boolean)
-  .map((base) => base.replace(/\/+$/, '')))];
+  .map(toAbsoluteBase)
+  .filter(Boolean))];
 
 const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
