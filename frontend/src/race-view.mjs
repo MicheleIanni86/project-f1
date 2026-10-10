@@ -3,19 +3,27 @@ import { RACES, getRaceTiming } from '../../shared/calendar.mjs';
 export const PLAYERS = ['Andrea', 'Giovanni', 'Luca', 'Marco', 'Michele', 'Salvo'];
 export const POSITIONS = [['pole', 'Pole position'], ['first', '1° posto'], ['second', '2° posto'], ['third', '3° posto']];
 export const EMPTY_PREDICTIONS = { pole: '', first: '', second: '', third: '' };
+// A race leaves "In corso" once it is surely over (red flags included), not at Italian midnight.
+const RACE_OVER_MS = 3 * 60 * 60 * 1000;
 
 export function buildRaces(schedules, summaries, now) {
-  return RACES.filter((race) => !race.isCancelled).map((race) => ({
-    ...race,
-    ...getRaceTiming(race, schedules[race.id], now),
-    points: summaries?.find((entry) => entry.id === race.id)?.points || {},
-  })).sort((a, b) => a.raceStartsAt - b.raceStartsAt);
+  return RACES.filter((race) => !race.isCancelled).map((race) => {
+    const timing = getRaceTiming(race, schedules[race.id], now);
+    const finished = timing.done || Boolean(timing.raceStartsAt && now - timing.raceStartsAt >= RACE_OVER_MS);
+    return {
+      ...race,
+      ...timing,
+      finished,
+      isOngoing: timing.isOngoing && !finished,
+      points: summaries?.find((entry) => entry.id === race.id)?.points || {},
+    };
+  }).sort((a, b) => a.raceStartsAt - b.raceStartsAt);
 }
 
 export function filterRaces(races, filter) {
-  const filtered = races.filter((race) => filter === 'past' ? race.done
+  const filtered = races.filter((race) => filter === 'past' ? race.finished
     : filter === 'ongoing' ? race.isLocked || race.isOngoing
-      : !race.done && !race.isLocked && !race.isOngoing);
+      : !race.finished && !race.isLocked && !race.isOngoing);
   return filter === 'past' ? filtered.sort((a, b) => b.raceStartsAt - a.raceStartsAt) : filtered;
 }
 
@@ -59,7 +67,7 @@ export function formatDate(value, options = {}) {
 }
 
 export function raceStatus(race, isEditable) {
-  if (race.done) return { label: 'Conclusa', tone: 'muted' };
+  if (race.finished) return { label: 'Conclusa', tone: 'muted' };
   if (race.isOngoing) return { label: 'Gara di oggi', tone: 'red' };
   if (race.isLocked) return { label: 'Pronostici chiusi', tone: 'amber' };
   if (isEditable) return { label: 'Pronostici aperti', tone: 'green' };

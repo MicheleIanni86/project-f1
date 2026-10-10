@@ -44,7 +44,7 @@ export default function App() {
   const filter = view.filter || (activeRaces.length ? 'ongoing' : 'upcoming');
   const visibleRaces = filterRaces(races, filter);
   const selectedRace = races.find((race) => race.id === view.raceId);
-  const featured = activeRaces[0] || races.find((race) => !race.done);
+  const featured = activeRaces[0] || races.find((race) => !race.finished);
   const ownStanding = players.find((player) => player.name === currentUser);
 
   useEffect(() => { viewRef.current = view; }, [view]);
